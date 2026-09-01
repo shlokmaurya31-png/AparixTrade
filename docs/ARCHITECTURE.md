@@ -1019,6 +1019,60 @@ script using the app's own models — the same "fix the real, already-
 affected data, re-verify live" discipline as Session 4's duplicate-event
 cleanup — not a permanent architectural change to event seeding.
 
+**Session 11 — Real Postgres verification pass** (done): `docs/DATABASE_MIGRATION.md`
+had documented the SQLite → PostgreSQL path since Tier 1's start but
+flagged it as "never actually been run against" — this session actually
+ran it, against a real local PostgreSQL 16 instance (installed via
+Homebrew; Docker wasn't available in this environment, so
+`docker-compose.yml`'s reference setup was mirrored with matching
+credentials rather than used directly). Every migration this entire
+build has ever generated, across all 10 prior sessions, applied cleanly
+to a real empty Postgres database in one `alembic upgrade head` run — a
+genuine, non-trivial confirmation that the schema really has stayed
+portable, not just assumed to be from writing database-agnostic
+SQLAlchemy types.
+
+Two real, previously-undetected bugs were caught by actually running the
+full test suite against Postgres (not just applying the migrations) —
+exactly what §5 of the migration doc asked for and exactly why it asked
+for it:
+
+1. **A pytest-asyncio/asyncpg event-loop incompatibility**: this app's
+   database engine (`core/db.py::engine`) is a module-level singleton, and
+   asyncpg's connection pool is bound to the event loop active when it was
+   first used. pytest-asyncio's default *per-test* event loop meant every
+   test after the first tried to reuse a pool bound to an already-closed
+   loop, failing with `RuntimeError: Task ... got Future ... attached to a
+   different loop`. SQLite/aiosqlite tolerates this; a real async driver
+   does not. Fixed by setting `asyncio_default_fixture_loop_scope` and
+   `asyncio_default_test_loop_scope` to `"session"` in `pyproject.toml` —
+   a real, permanent test-infrastructure fix (not a one-off flag for this
+   verification run), confirmed to leave the SQLite-run suite exactly as
+   green as before (311/311, unchanged).
+2. **Four timezone-naive `DateTime` columns that always received a
+   timezone-aware value**: `Transaction.executed_at`,
+   `BrokerConnection.token_expires_at`/`connected_at`/`last_synced_at` were
+   declared as plain `Mapped[datetime]` (no `timezone=True`) but every
+   caller always assigns `datetime.now(timezone.utc)`. SQLite has no real
+   `TIMESTAMP` type and silently stores whatever it's given regardless of
+   declared timezone-awareness; Postgres correctly enforces it and
+   rejected every paper-trading order and every broker connection with
+   `can't subtract offset-naive and offset-aware datetimes` — a **real
+   bug that would have broken two entire features (paper trading, broker
+   sync) the moment this app was ever actually deployed against
+   Postgres**, silently masked by SQLite across all 10 prior sessions'
+   own verification. Fixed at the model level (`models/portfolio.py`,
+   `models/broker.py`) and a real migration
+   (`c099f67b53ef_make_timestamp_columns_timezone_aware.py`) that's a
+   genuine no-op for SQLite (which has no real distinction to migrate)
+   and a real `ALTER COLUMN ... TYPE timestamptz` for Postgres —
+   determined by checking `op.get_bind().dialect.name` at migration time,
+   not by guessing which backend would be running it.
+
+The full backend test suite (311 tests) now passes identically against
+both a real Postgres 16 instance and the checked-in SQLite default — the
+first time this has been genuinely confirmed, not just claimed.
+
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
 `docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): a
 document-upload/PDF/filing corpus beyond ingested news articles, an ANN
@@ -1033,6 +1087,4 @@ statement is `is_restated=False`), real data providers for fundamentals/
 corporate-actions/macro (still `MOCK` only), entity extraction and a
 company-to-company supply-chain layer for the knowledge graph (real
 headquarters/commodity facts only, no fabricated supplier edges — see
-above), a historical analogue engine, portfolio exposure beyond sector,
-and a real Postgres verification pass (documented but never run against a
-real instance in this environment).
+above), and a historical analogue engine.

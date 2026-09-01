@@ -1,12 +1,11 @@
-# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–10)
+# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–11)
 
 Written against `docs/APARIX_TIER1_AUDIT.md` (the pre-implementation
 audit) and the Tier 1 infrastructure request's own 64 sections. Honest
 percentages, not aspirational ones — see §61's own instruction not to
-claim 100% unless something genuinely is. Updated after Session 10
-(financial knowledge graph + event propagation beyond one target);
-Sessions 1–9 content below is otherwise unchanged from when it was
-first written.
+claim 100% unless something genuinely is. Updated after Session 11 (real
+Postgres verification pass); Sessions 1–10 content below is otherwise
+unchanged from when it was first written.
 
 ## What "Session 1" means
 
@@ -369,6 +368,67 @@ fixed, hand-authored list unlike the genuinely-growing domains (macro
 vintage, historical universe, news) that were fixed by decoupling their
 seeding instead.
 
+## Session 11: Real Postgres verification pass
+
+`docs/DATABASE_MIGRATION.md` documented the SQLite → PostgreSQL path
+since Tier 1's start but flagged it explicitly: "as of this session it
+has never actually been run against — that's a real gap, not a
+tested-and-forgotten path." This session actually ran it:
+
+| Item | Where | Verification |
+|---|---|---|
+| A real local PostgreSQL 16 instance | Homebrew (`postgresql@16`) — Docker wasn't available in this environment, so `docker-compose.yml`'s reference credentials were mirrored, not used directly | `psql`, `pg_isready` confirmed a real running server |
+| Every migration this build has ever generated applies to Postgres | `alembic upgrade head` against a real empty Postgres database | All 10 revisions across all 10 prior sessions ran cleanly in one pass — 26 tables created correctly, verified via `\dt` |
+| The full backend test suite passes against real Postgres | `DATABASE_URL=postgresql+asyncpg://... uv run pytest` | 311/311 passing — identical to the SQLite run |
+
+Test count (end of Session 11): **311 passing** (unchanged from Session
+10 — this session fixed 2 real bugs the existing tests already covered,
+rather than adding new test count, plus the 2 new columns' timezone fix
+is exercised by the existing paper-trading/broker test suites).
+
+**Two real, previously-undetected bugs, caught only by actually running
+the suite against Postgres, not by applying the migration alone:**
+
+1. **A pytest-asyncio/asyncpg event-loop incompatibility.** This app's
+   database engine (`core/db.py::engine`) is a module-level singleton;
+   asyncpg's connection pool binds to whatever event loop is active when
+   first used. pytest-asyncio's default *per-test* event loop meant every
+   test after the first tried to reuse a pool bound to an already-closed
+   loop (`RuntimeError: Task ... got Future ... attached to a different
+   loop`). SQLite/aiosqlite tolerates this silently; a real async driver
+   does not. Fixed by setting `asyncio_default_fixture_loop_scope` and
+   `asyncio_default_test_loop_scope` to `"session"` in `pyproject.toml` —
+   a permanent test-infrastructure fix, confirmed to leave the SQLite
+   suite exactly as green as before it (311/311, unchanged).
+2. **Four timezone-naive `DateTime` columns that always received a
+   timezone-aware value.** `Transaction.executed_at` and
+   `BrokerConnection.token_expires_at`/`connected_at`/`last_synced_at`
+   were declared without `timezone=True`, but every caller in the
+   codebase always assigns `datetime.now(timezone.utc)`. SQLite has no
+   real `TIMESTAMP` type and silently stores whatever it's given; Postgres
+   correctly enforces the mismatch and rejected every paper-trading order
+   and every broker connection attempt with `can't subtract offset-naive
+   and offset-aware datetimes`. **This is a real bug that would have
+   broken two entire features — paper trading and broker sync — the
+   moment this app was ever actually deployed against Postgres**, and it
+   was silently masked by SQLite across all 10 prior sessions' own
+   verification, including every "applied live to the real local dev
+   database" check this report has cited as evidence throughout. Fixed at
+   the model level (`models/portfolio.py`, `models/broker.py`) and with a
+   real migration that checks `op.get_bind().dialect.name` at migration
+   time — a genuine no-op for SQLite, a real `ALTER COLUMN ... TYPE
+   timestamptz` for Postgres.
+
+**A sobering, honest note this report should not gloss over:** every
+prior session's "verified live against the real local dev database"
+claim in this document was true — and also incomplete, because that real
+local dev database was always SQLite. This is exactly the class of bug a
+type-portable schema and a green test suite can hide indefinitely without
+ever actually exercising the second real backend the schema claims to
+support. The fix is not "write more SQLite tests" — it's what this
+session did: actually run against the second real backend, at least once,
+before trusting the portability claim.
+
 ## Partially implemented
 
 - **Provenance** only covers 2 of the many data shapes this app serves
@@ -555,10 +615,17 @@ external data source and changed no licensing posture.
   table scan — fine at today's data volume (~20 securities × ~1 trading
   year), documented in its own docstring as needing batching/pagination
   before a real, much larger historical dataset makes that slow.
-- PostgreSQL migration path is documented (`docs/DATABASE_MIGRATION.md`)
-  but never actually run against a real Postgres instance in this
-  environment — SQLite-only verification, same limitation the codebase
-  already carried before this session.
+- ~~PostgreSQL migration path is documented but never actually run
+  against a real Postgres instance~~ — **done in Session 11**: run for
+  real (Homebrew-installed PostgreSQL 16, Docker unavailable in this
+  environment), including the full 311-test backend suite, and two real
+  bugs it surfaced were fixed, not just noted (see Session 11, above).
+  Genuinely new limitation surfaced *by* that verification: the fix for
+  the pytest-asyncio/asyncpg event-loop issue was a one-time, run-by-hand
+  verification — there's no CI job that re-runs the suite against
+  Postgres automatically on every future change, so a future regression
+  in Postgres-specific behavior could reintroduce silently until someone
+  runs this pass again by hand.
 - Observed live during Session 3 verification: asked about TCS dividends
   with no other context, `llama3.1` called `get_corporate_actions` with a
   fabricated `as_of` date instead of omitting the optional parameter,
@@ -588,17 +655,19 @@ In rough dependency order, matching what actually unblocks the most:
 1. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
    beyond news articles, now that Session 6 has a real embedding+retrieval
    foundation to extend rather than build from scratch.
-2. **A real Postgres verification pass** — the migration path is
-   documented (`docs/DATABASE_MIGRATION.md`) but has never actually been
-   run against a real Postgres instance in this environment, still
-   SQLite-only in every session's own verification so far.
-3. **Entity extraction from ingested news into the knowledge graph** — a
+2. **Entity extraction from ingested news into the knowledge graph** — a
    real, separate effort now that both a real news pipeline (Session 4)
    and a real, if small, knowledge graph (Session 10) exist independently;
    connecting them (an ingested article about a real event automatically
    identifying which seeded locations/commodities/securities it concerns,
    rather than a human hand-picking `primary_target`) is genuinely
    unstarted.
+3. **A CI job that re-runs the backend suite against real Postgres** — the
+   verification pass itself is now real (Session 11), but it's a one-time,
+   run-by-hand pass; without automation, a future change could
+   reintroduce a Postgres-specific regression (like Session 11's two)
+   silently, exactly the way the timezone bug went unnoticed for 10
+   sessions.
 4. **A historical analogue engine** — still not attempted; this codebase
    has no real historical crisis dataset to build one against honestly.
 
@@ -612,14 +681,14 @@ for:
 
 | Area | Readiness | Why |
 |---|---|---|
-| Core architecture (domain structure, provider pattern, testing discipline) | **~88%** | Genuinely solid — real migrations, RBAC, five independent real point-in-time query engines, a real external-data ingestion pipeline, a real embedding/retrieval layer, real rate limiting/request-ID correlation, and now a real (if small) knowledge graph with genuine multi-security event propagation; still missing a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
+| Core architecture (domain structure, provider pattern, testing discipline) | **~90%** | Genuinely solid — real migrations (now genuinely verified portable to Postgres, not just written to look portable), RBAC, five independent real point-in-time query engines, a real external-data ingestion pipeline, a real embedding/retrieval layer, real rate limiting/request-ID correlation, and a real knowledge graph with genuine multi-security event propagation; still missing a background-worker/event-bus abstraction beyond the two asyncio loops that now exist, and a CI job that re-runs the suite against Postgres automatically |
 | Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~65%** | Point-in-time enforcement now exists for four data domains (fundamentals, corporate actions, macro vintage, security universe) plus news's real-vs-classified distinction, each with a regression test proving no future-data leak — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, and macro's point-in-time discipline covers 2 of 7 indicators (correctly — the other 5 have no revision concept to enforce) |
 | Actual financial data (market/fundamentals/macro/news/corporate actions) | **~25%** | Macro now has real revision/vintage history for the 2 indicators that genuinely have one, alongside fundamentals/corporate-actions' real point-in-time engines and news's one real external source (gated off by default). Still entirely synthetic underneath: no real market-data, fundamentals, or macro vendor integration |
 | Knowledge graph / event intelligence / RAG | **~28%** | A real, if small and hand-curated, knowledge graph now drives genuine multi-security event propagation (Session 10) — location/commodity events fan out to every security with a real, documented exposure, not just one hand-picked target; RAG has a real embedding+retrieval foundation over the real news corpus (Session 6). Still missing: entity extraction connecting the two (an ingested article automatically identifying its own graph targets), company-to-company supply-chain edges, and the RAG corpus is one document domain |
 | Security (RBAC, encryption, rate limiting, audit) | **~60%** | RBAC has a real, guarded management UI and a real per-change audit trail (Session 7); credential encryption is real; rate limiting, request-ID correlation, and sanitized error responses are now real too (Session 9), though the rate limiter is single-process-only |
 | Regulatory posture | **~50%** | The education/analytics/advisory/execution boundary is genuinely maintained in product copy and this doc set — but that discipline has never been reviewed by an actual compliance professional, which the request itself says is required before anything resembling real advice or execution ships |
 
-**Overall: ten sessions in, the foundation is meaningfully stronger
+**Overall: eleven sessions in, the foundation is meaningfully stronger
 (schema-drift risk fixed, real RBAC with a real management UI and audit
 trail, a real provenance/quality seam, five independent point-in-time
 query engines each proven against an actual leak scenario — including
@@ -654,7 +723,17 @@ gotcha a fifth time — this time against its own hand-authored event
 content, fixed by directly backfilling the real dev database rather than
 a permanent architectural change, since a fixed, small, hand-authored
 list doesn't have the same "must be decoupled" property as a genuinely
-growing domain. But "Aparix, the financial intelligence operating system
-for India" is still, honestly, mostly ahead of this codebase, not behind
-it — entity extraction still doesn't connect the real news pipeline to
-the real knowledge graph, and RAG covers exactly one document domain.**
+growing domain; Session 11 finally ran the long-deferred real Postgres
+verification pass and found the most consequential bugs of any session
+so far — not a live-verification nuance or a test-count mismatch, but two
+genuine defects (an async-driver test-infrastructure incompatibility, and
+four timezone-naive columns that would have broken paper trading and
+broker sync entirely under real Postgres) that had been silently masked
+by SQLite across all 10 prior sessions' own "verified live" claims. Every
+one of those prior claims was still true — and also incomplete, because
+"verified live" always meant SQLite specifically. That gap is now closed,
+for real, not just documented as closed. But "Aparix, the financial
+intelligence operating system for India" is still, honestly, mostly ahead
+of this codebase, not behind it — entity extraction still doesn't connect
+the real news pipeline to the real knowledge graph, and RAG covers
+exactly one document domain.**

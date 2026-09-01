@@ -179,6 +179,8 @@ apps/web/   Next.js 16 (App Router), TypeScript strict, Tailwind — the UI
 apps/api/   FastAPI, SQLAlchemy async, modular monolith — everything else
 docs/       Architecture doc
 docker-compose.yml   Optional Postgres for local dev if you have Docker
+                     (the SQLite → Postgres migration path is genuinely
+                     verified — see docs/DATABASE_MIGRATION.md)
 ```
 
 All market data, events, macro data, options chains/Greeks, AI responses,

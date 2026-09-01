@@ -71,28 +71,43 @@ connection-string change, not a rewrite:
 DATABASE_URL=postgresql+asyncpg://aparix:aparix@localhost:5432/aparix
 ```
 
-`docker-compose.yml` already provides a local Postgres container, but as
-of this session it has never actually been run against — that's a real
-gap, not a tested-and-forgotten path. Before a production deploy:
+`docker-compose.yml` already provides a local Postgres container. **This
+path has now genuinely been run against a real instance (Tier 1 Session
+11)** — PostgreSQL 16 via Homebrew (Docker wasn't available in that
+verification environment; the compose file's credentials were mirrored
+for consistency, not used directly). All 5 steps below were actually
+executed, not just described, and two real bugs were found and fixed as
+a direct result — see `docs/ARCHITECTURE.md` §12, Session 11, for the
+full account. Steps 1-5 remain the real procedure for a fresh target
+instance:
 
 1. Point `DATABASE_URL` at the target Postgres instance.
 2. Run `alembic upgrade head` against it directly (not through the app's
    lifespan, for a controlled first deploy) — this creates the full schema
    from the same migration used for SQLite, since the model definitions
-   are database-agnostic.
+   are database-agnostic. **Confirmed**: every migration this build has
+   ever generated (10 revisions, spanning every Tier 1 session) applied
+   cleanly to a real empty Postgres 16 database in one run.
 3. `alembic/env.py` uses `async_engine_from_config` (an async engine,
    matching the app's own runtime), so — unlike a lot of Alembic setups —
    no separate synchronous driver (e.g. `psycopg2`) needs to be installed
    alongside `asyncpg` just to run migrations. Worth re-checking only if
    `env.py` is ever rewritten to be synchronous.
 4. Verify `apps/api/pyproject.toml`'s `asyncpg` dependency version is
-   compatible with the target Postgres server version.
+   compatible with the target Postgres server version. **Confirmed**:
+   `asyncpg>=0.30` (0.31.0 installed) against Postgres 16.
 5. Re-run the full backend test suite against a real Postgres instance
    before trusting it — SQLite does not enforce the same
    concurrency/constraint behavior as Postgres (see `docs/ARCHITECTURE.md`
    §11); every DB-level unique-index-plus-retry pattern in this codebase
    (paper portfolios, broker portfolios) was only ever exercised against
-   SQLite.
+   SQLite. **Confirmed, and this step is exactly what caught the two real
+   bugs**: point `DATABASE_URL` at a real Postgres database before
+   importing `tests/conftest.py` (it uses `os.environ.setdefault`, not an
+   unconditional assignment, specifically so this works —
+   `DATABASE_URL=postgresql+asyncpg://aparix:aparix@localhost:5432/aparix_test uv run pytest`).
+   All 311 tests pass identically against both backends as of this
+   session.
 
 ## Time-series storage beyond PostgreSQL
 
