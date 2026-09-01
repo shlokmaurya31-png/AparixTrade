@@ -4,12 +4,14 @@ AI-native Indian financial intelligence platform. **Phase 1 through 6 —
 every phase on the original roadmap, scoped** (see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and the
 trade-offs behind every scoping decision), **plus Tier 1 infrastructure**
-(data provenance, quality checks, RBAC, real Alembic migrations, a
-point-in-time fundamentals + corporate-actions + macro-vintage engine, a
-real news ingestion pipeline that can genuinely fetch and classify a
-live RSS feed, and a real RAG foundation — genuine embeddings and
-cosine-similarity retrieval over the ingested news corpus, backing a
-functional "Researcher" AI mode — see
+(data provenance, quality checks, RBAC with a real role-management UI and
+audit trail, real Alembic migrations, a point-in-time fundamentals +
+corporate-actions + macro-vintage + security-universe engine, a real news
+ingestion pipeline that can genuinely fetch and classify a live RSS feed,
+a real RAG foundation — genuine embeddings and cosine-similarity retrieval
+over the ingested news corpus, backing a functional "Researcher" AI
+mode — real rate limiting, request-ID correlation, and structured
+logging — see
 [`docs/APARIX_TIER1_COMPLETION_REPORT.md`](docs/APARIX_TIER1_COMPLETION_REPORT.md)
 for an honest breakdown of what's real vs. still missing): auth, an
 adaptive dashboard, a portfolio engine, mock Indian market data, a risk &

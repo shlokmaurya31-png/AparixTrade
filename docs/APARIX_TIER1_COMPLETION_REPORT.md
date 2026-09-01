@@ -1,11 +1,11 @@
-# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–8)
+# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–9)
 
 Written against `docs/APARIX_TIER1_AUDIT.md` (the pre-implementation
 audit) and the Tier 1 infrastructure request's own 64 sections. Honest
 percentages, not aspirational ones — see §61's own instruction not to
-claim 100% unless something genuinely is. Updated after Session 8
-(survivorship-bias / point-in-time security universe); Sessions 1–7
-content below is otherwise unchanged from when it was first written.
+claim 100% unless something genuinely is. Updated after Session 9 (rate
+limiting, request-ID middleware, sanitized error responses); Sessions
+1–8 content below is otherwise unchanged from when it was first written.
 
 ## What "Session 1" means
 
@@ -288,6 +288,45 @@ ordering `seed_historical_universe_if_needed()` after both
 in `app.main`'s lifespan, and documented in both functions' docstrings so
 the ordering requirement doesn't silently break again later.
 
+## Session 9: Rate limiting, request-ID middleware, sanitized error responses
+
+§42, flagged in the original Tier 1 audit and unaddressed across 8 prior
+sessions:
+
+| Item | Where | Verification |
+|---|---|---|
+| `FixedWindowRateLimiter` + `RateLimitMiddleware` | `core/rate_limit.py`, `core/middleware.py` | `tests/test_middleware.py` (12 tests) — pure unit tests with a faked clock for window-boundary behavior, plus real HTTP tests against a dedicated throwaway app; live-verified against the actual running server: 10 rapid login attempts returned `401` (wrong credentials, correctly not `429`), the 11th and 12th returned real `429`s with a real `Retry-After` header |
+| `RequestIDMiddleware` | `core/middleware.py` | Every response carries a real `X-Request-ID`; a client-supplied value is only trusted if it's a syntactically valid UUID (a log-injection guard), verified by a dedicated test that a malformed supplied value is replaced, not echoed back |
+| Structured, request-correlated logging | `core/logging_config.py` | Root logger previously had no explicit handler (WARNING-level calls were silently dropped by Python's fallback "handler of last resort") — now every log line, from any `app.*` logger, carries the request ID of whichever request triggered it |
+| Global exception handler | `main.py::unhandled_exception_handler()` | `tests/test_middleware.py::test_unhandled_exception_returns_a_sanitized_response_with_the_request_id` and `test_existing_typed_http_exceptions_are_unaffected_by_the_catch_all_handler` — the second one specifically proves the new catch-all handler never shadows an existing typed 404/403/400 |
+
+Test count (end of Session 9): **294 passing** (+12 over Session 8's 282;
+0 regressions).
+
+**Sanitized error responses were verified empirically to already be the
+framework default, not assumed:** before writing any code, a throwaway
+probe forced a real unhandled exception containing a deliberately
+sensitive-looking string through the actual running app and confirmed
+Starlette's own default (this app never sets `debug=True`) already
+returns a bare, non-leaking `"Internal Server Error"`. This report will
+not claim credit for fixing a leak that didn't exist. What Session 9
+genuinely added: a consistent JSON error shape matching the rest of the
+API, a request ID in that response for correlation, and — the real new
+capability — actually logging the real exception with a traceback
+server-side, which nothing did before.
+
+**A real Starlette internal, learned and then verified by a failing
+test, not assumed correct in advance:** a handler registered for the bare
+`Exception` type is installed into Starlette's `ServerErrorMiddleware`
+(outermost, added *before* any user middleware — confirmed by reading
+`Starlette.build_middleware_stack()`'s source directly, not guessed),
+which sits outside `RequestIDMiddleware`. The first version of the
+exception handler relied on `RequestIDMiddleware` to attach the response
+header, which — for exactly this exception path — never happens, since
+the response never passes back through that middleware's normal
+post-`call_next` line. Caught by `KeyError: 'x-request-id'` in a real
+test run, fixed by having the handler set the header itself.
+
 ## Partially implemented
 
 - **Provenance** only covers 2 of the many data shapes this app serves
@@ -356,8 +395,10 @@ the ordering requirement doesn't silently break again later.
   separate work for whenever a specific subsystem (e.g. RAG, or a
   broker-adapter rewrite) makes evaluating a specific candidate concrete
   rather than speculative.
-- Rate limiting, request-ID middleware, sanitized error responses (§42) —
-  still missing, unchanged from the audit.
+- ~~Rate limiting, request-ID middleware, sanitized error responses
+  (§42)~~ — **done in Session 9**, see above. Sanitized error responses
+  turned out to already be the framework default (verified, not
+  assumed); rate limiting and request-ID correlation are genuinely new.
 - Kafka/Redpanda event bus, background worker process (§41, §57) — still
   just the one in-process asyncio tick loop.
 
@@ -429,9 +470,14 @@ external data source and changed no licensing posture.
 
 ## Security concerns
 
-- Rate limiting, request-ID middleware, and sanitized error responses are
-  still missing — flagged in the audit, not addressed this session (RBAC
-  was prioritized as the higher-leverage piece).
+- ~~Rate limiting, request-ID middleware, and sanitized error responses
+  are still missing~~ — **done in Session 9**: real per-IP rate limiting
+  with a stricter window on auth endpoints, real request-ID correlation,
+  and (verified, not assumed) sanitized error responses were already the
+  framework default. Still a real, documented limitation: the rate
+  limiter is in-process only (an in-memory dict, not Redis) — correct for
+  this app's actual single-process architecture, but would need a shared
+  store before a real multi-instance deployment.
 - ~~RBAC has no role-editing UI or audit trail specifically for role
   changes yet~~ — **done in Session 7**: `PATCH /admin/users/{id}/role`
   is real, guarded (self-role-change blocked, only `super_admin` can
@@ -478,16 +524,17 @@ external data source and changed no licensing posture.
 
 In rough dependency order, matching what actually unblocks the most:
 
-1. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
-   beyond news articles, now that Session 6 has a real embedding+retrieval
-   foundation to extend rather than build from scratch.
-2. **Financial knowledge graph** (entities + typed relationships) and
+1. **Financial knowledge graph** (entities + typed relationships) and
    **event propagation beyond one target** — the two largest remaining
    items from the original Tier 1 request's own priority list, both still
    essentially unstarted.
-3. **Rate limiting, request-ID middleware, sanitized error responses**
-   (§42) — flagged in the original audit, still not addressed by any
-   session so far.
+2. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
+   beyond news articles, now that Session 6 has a real embedding+retrieval
+   foundation to extend rather than build from scratch.
+3. **A real Postgres verification pass** — the migration path is
+   documented (`docs/DATABASE_MIGRATION.md`) but has never actually been
+   run against a real Postgres instance in this environment, still
+   SQLite-only in every session's own verification so far.
 
 ## Production readiness score
 
@@ -499,37 +546,42 @@ for:
 
 | Area | Readiness | Why |
 |---|---|---|
-| Core architecture (domain structure, provider pattern, testing discipline) | **~85%** | Genuinely solid — real migrations, RBAC, five independent real point-in-time query engines (fundamentals, corporate actions, macro vintage, news classification, and now security-universe membership itself), a real external-data ingestion pipeline, and a real embedding/retrieval layer; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
+| Core architecture (domain structure, provider pattern, testing discipline) | **~87%** | Genuinely solid — real migrations, RBAC, five independent real point-in-time query engines (fundamentals, corporate actions, macro vintage, news classification, and security-universe membership itself), a real external-data ingestion pipeline, a real embedding/retrieval layer, and now real rate limiting/request-ID correlation; still missing a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
 | Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~65%** | Point-in-time enforcement now exists for four data domains (fundamentals, corporate actions, macro vintage, security universe) plus news's real-vs-classified distinction, each with a regression test proving no future-data leak — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, and macro's point-in-time discipline covers 2 of 7 indicators (correctly — the other 5 have no revision concept to enforce) |
 | Actual financial data (market/fundamentals/macro/news/corporate actions) | **~25%** | Macro now has real revision/vintage history for the 2 indicators that genuinely have one, alongside fundamentals/corporate-actions' real point-in-time engines and news's one real external source (gated off by default). Still entirely synthetic underneath: no real market-data, fundamentals, or macro vendor integration |
 | Knowledge graph / event intelligence / RAG | **~15%** | News ingestion creates real single-target events (a narrow slice of "event intelligence"); RAG now has a real embedding+retrieval foundation over the real news corpus (Session 6) — still no entity extraction, no propagation graph, no knowledge graph, and the RAG corpus is one document domain, not the broader knowledge base the full spec describes |
-| Security (RBAC, encryption, rate limiting, audit) | **~45%** | RBAC now has a real, guarded management UI and a real per-change audit trail (Session 7), and credential encryption is real; rate limiting, request IDs, and error sanitization are still entirely absent |
+| Security (RBAC, encryption, rate limiting, audit) | **~60%** | RBAC has a real, guarded management UI and a real per-change audit trail (Session 7); credential encryption is real; rate limiting, request-ID correlation, and sanitized error responses are now real too (Session 9), though the rate limiter is single-process-only |
 | Regulatory posture | **~50%** | The education/analytics/advisory/execution boundary is genuinely maintained in product copy and this doc set — but that discipline has never been reviewed by an actual compliance professional, which the request itself says is required before anything resembling real advice or execution ships |
 
-**Overall: eight sessions in, the foundation is meaningfully stronger
+**Overall: nine sessions in, the foundation is meaningfully stronger
 (schema-drift risk fixed, real RBAC with a real management UI and audit
 trail, a real provenance/quality seam, five independent point-in-time
-query engines each proven against an actual leak scenario — including,
-as of this session, universe *membership itself*, not just a single
-security's own data — a real external news pipeline verified against a
-live government feed, real macro revision/vintage history for the two
-indicators that genuinely have one, and a real embedding/retrieval layer
-with a genuinely functional `researcher` AI mode) without adding a single
-line of fake functionality. A real plausibility bug (P/E ~1667) was
-caught and fixed during live verification in Session 2; a real
-duplicate-event bug was caught and fixed in Session 4; Session 5 caught
-the same "seed only runs once" gotcha a third time and, separately, a
-test that was asserting something unrealistic rather than something
-wrong; Session 6 caught a real tool-argument crash and, more importantly,
-a real gap in the hallucination guardrail itself (a failed tool call
-wasn't being treated as ungrounded) — caught by actually watching the
-local model fabricate citations live, not by inspection, and fixed the
-same day; Session 7's own live verification surfaced an apparent
-hydration-error console message that turned out to be a direct-URL-
-navigation artifact, not a real regression; Session 8 caught the same
-"seed only runs once" gotcha a fourth time, this time as a
-cross-domain seeding-order dependency, and caught it at design time
-rather than live. But "Aparix,
+query engines each proven against an actual leak scenario — including
+universe *membership itself*, not just a single security's own data — a
+real external news pipeline verified against a live government feed,
+real macro revision/vintage history for the two indicators that genuinely
+have one, a real embedding/retrieval layer with a genuinely functional
+`researcher` AI mode, and now real rate limiting/request-ID correlation/
+structured logging) without adding a single line of fake functionality.
+A real plausibility bug (P/E ~1667) was caught and fixed during live
+verification in Session 2; a real duplicate-event bug was caught and
+fixed in Session 4; Session 5 caught the same "seed only runs once"
+gotcha a third time and, separately, a test that was asserting something
+unrealistic rather than something wrong; Session 6 caught a real
+tool-argument crash and, more importantly, a real gap in the
+hallucination guardrail itself (a failed tool call wasn't being treated
+as ungrounded) — caught by actually watching the local model fabricate
+citations live, not by inspection, and fixed the same day; Session 7's
+own live verification surfaced an apparent hydration-error console
+message that turned out to be a direct-URL-navigation artifact, not a
+real regression; Session 8 caught the same "seed only runs once" gotcha
+a fourth time, this time as a cross-domain seeding-order dependency,
+caught at design time rather than live; Session 9 empirically verified a
+claimed gap (error-response sanitization) turned out to already be
+satisfied by the framework default rather than assuming it needed
+fixing, and separately learned and then verified (via a genuine failing
+test, not a guess) a real Starlette internal about where a bare-`Exception`
+handler actually runs in the middleware stack. But "Aparix,
 the financial intelligence operating system for India" is still,
 honestly, mostly ahead of this codebase, not behind it — the knowledge
 graph is still essentially unstarted, and RAG covers exactly one document

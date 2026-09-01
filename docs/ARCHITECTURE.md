@@ -387,6 +387,8 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Only super_admin can touch super_admin (Tier 1 S7) | A plain `admin` can grant/revoke any role except `super_admin`, and cannot change an existing `super_admin`'s role at all | Letting a lower-privileged admin mint or strip the platform's highest privilege would defeat having tiers at all | `tests/test_role_management.py::test_plain_admin_cannot_grant_super_admin`, `test_plain_admin_cannot_change_an_existing_super_admins_role` |
 | Fictitious historical securities (Tier 1 S8) | The 2 seeded historical-only securities (`ORIONINFRA`, `VELOCFIN`) are invented companies, not real ones | A delisting/merger is a specific, checkable real-world fact; asserting a real Indian company was delisted/merged on a synthetic date this app invented would be a factual claim with no basis — every other seeded security uses a real company's identity, but only for synthetic *price* data, never a synthetic *corporate event* |  |
 | `list_securities()` default excludes non-tradable (Tier 1 S8) | Every existing caller (frontend dropdowns, live tick seeding, fundamentals/corporate-actions' own seeding queries) keeps returning only the live tradable universe by default; `include_delisted=True` is opt-in | Adding historical-only securities must never silently change what "all securities" means to code written before they existed — live-verified via Playwright that `/portfolio`/`/options`/`/fundamentals` dropdowns are unaffected | `tests/test_survivorship_bias.py::test_live_universe_excludes_historical_securities`, `test_get_securities_endpoint_excludes_historical_securities` |
+| Hand-rolled rate limiter, not a package (Tier 1 S9) | `FixedWindowRateLimiter` — a plain in-memory dict, no `slowapi`/Redis dependency | Small enough to own directly and correctly, same reasoning as every hand-rolled point-in-time query in this codebase; a real dependency would also imply a shared/multi-process store this app doesn't have | Real, live-verified 429s with a real `Retry-After` — not a stub; documented as single-process-only, matching this app's actual (single-process) architecture |
+| Exception handler sets its own `X-Request-ID` header (Tier 1 S9) | `unhandled_exception_handler()` sets the header directly rather than relying on `RequestIDMiddleware` | A handler registered for the bare `Exception` type runs in Starlette's `ServerErrorMiddleware`, outside `RequestIDMiddleware` — a response built there never passes back through that middleware's own header-attachment line | Caught by a genuine failing test (`KeyError: 'x-request-id'`), not predicted — `tests/test_middleware.py::test_unhandled_exception_returns_a_sanitized_response_with_the_request_id` |
 
 ## 10. Roadmap
 
@@ -903,6 +905,67 @@ surface was added for browsing the point-in-time universe itself
 (deliberate scope decision, same reasoning as macro vintage — no existing
 page naturally hosts it); the data is reachable via the API.
 
+**Session 9 — Rate limiting, request-ID middleware, sanitized error
+responses** (done): §42, flagged in the original Tier 1 audit and
+unaddressed across 8 prior sessions. `RequestIDMiddleware`/
+`RateLimitMiddleware` (`core/middleware.py`) are plain Starlette
+middleware, not a third-party package — small enough to own directly,
+consistent with this codebase's pattern everywhere else. A real, working
+in-process `FixedWindowRateLimiter` (`core/rate_limit.py`) — a general
+per-client-IP limit and a stricter one for `/auth/login`/`/auth/register`/
+`/auth/refresh` (the brute-force-relevant paths) — returns real `429`s
+with a real `Retry-After` header, live-verified: 10 rapid login attempts
+against the actual running server returned `401` for the first 10, then
+`429` for the 11th and 12th. Explicitly scoped to a single process (an
+in-memory dict, not Redis) — consistent with the rest of this app's
+architecture (one asyncio process, SQLite), not a shortcut; disabled
+entirely in the test suite (`RATE_LIMIT_ENABLED=false` in conftest.py) so
+the suite's hundreds of requests from one fake client IP don't trip it,
+with the real behavior instead tested directly against a small dedicated
+throwaway app (`tests/test_middleware.py`) rather than fighting the
+production `app` singleton's import-time settings lock-in.
+
+Every request now carries a real correlation ID (`X-Request-ID`,
+generated fresh unless a client supplies a syntactically valid UUID — an
+arbitrary client-supplied string is rejected rather than trusted, since
+it would otherwise flow straight into structured log lines, a real
+log-injection risk). `core/logging_config.py` attaches a real formatted
+handler to the root logger (previously nonexistent — `app.*` loggers like
+`domains/news/service.py`'s pre-existing `logger.exception()` calls fell
+back to Python's bare "handler of last resort," dropping WARNING-level
+calls entirely) with a filter that injects the request ID from a
+`contextvars.ContextVar` set at the start of every request, so a single
+request's log lines can be correlated even under concurrent traffic.
+
+**Sanitized error responses turned out to already be the framework
+default — verified empirically, not assumed:** before writing any code, a
+throwaway probe forced a real unhandled `RuntimeError` containing a
+deliberately sensitive-looking string through the actual app and
+confirmed Starlette's default (`debug=False`, never set to `True`
+anywhere in this codebase) already returns a bare `"Internal Server
+Error"` with no leak. What this session added on top, genuinely new: a
+global `@app.exception_handler(Exception)` that returns a *consistent
+JSON* shape (`{"detail": "...", "request_id": "..."}`, matching the rest
+of the API) instead of Starlette's default plain-text body, and — the
+real, previously-nonexistent capability — logs the actual exception with
+a traceback server-side, correlated by request ID, so a genuine bug is
+actually debuggable rather than just safely hidden. A real Starlette
+internal was learned and then verified, not assumed: a handler registered
+for the bare `Exception` type is installed into `ServerErrorMiddleware`
+(outermost, added before user middleware — see
+`Starlette.build_middleware_stack()`), not `ExceptionMiddleware`, so it
+sits *outside* `RequestIDMiddleware` — a response built there would never
+pass back through `RequestIDMiddleware`'s normal
+"attach header after call_next returns" line, so the handler sets
+`X-Request-ID` on its own response directly. Caught by a genuine test
+failure (`KeyError: 'x-request-id'`), not predicted in advance.
+`tests/test_middleware.py::test_existing_typed_http_exceptions_are_unaffected_by_the_catch_all_handler`
+confirms the new catch-all handler never shadows FastAPI's own handling
+of a deliberately-raised `HTTPException` (a 404 for an unknown symbol is
+still a real 404, not swallowed into a generic 500) — Starlette dispatches
+to the most specific handler in the exception's MRO, so this was a real
+risk worth a dedicated regression test, not a hypothetical one.
+
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
 `docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): a
 document-upload/PDF/filing corpus beyond ingested news articles, an ANN
@@ -916,5 +979,6 @@ tested via synthetic fixtures), restatement tracking (every fundamentals
 statement is `is_restated=False`), real data providers for fundamentals/
 corporate-actions/macro (still `MOCK` only), entity extraction and the
 knowledge-graph step of the news pipeline, a financial knowledge graph
-more broadly, a historical analogue engine, and portfolio exposure beyond
-sector.
+more broadly, a historical analogue engine, portfolio exposure beyond
+sector, and a real Postgres verification pass (documented but never run
+against a real instance in this environment).
