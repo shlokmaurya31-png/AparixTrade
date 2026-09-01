@@ -40,3 +40,9 @@ class AdminSystemHealthOut(BaseModel):
     events_count: int
     last_market_tick: datetime.datetime | None
     database_backend: str
+
+
+class DataQualityFindingOut(BaseModel):
+    check: str
+    status: str  # "GOOD" | "WARNING" | "STALE" | "INVALID" | "UNKNOWN"
+    detail: str
