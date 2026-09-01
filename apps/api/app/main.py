@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import api_v1_router
 from app.core.config import get_settings
-from app.core.db import AsyncSessionLocal, init_models
+from app.core.db import AsyncSessionLocal
+from app.core.migrations import run_migrations
 from app.domains.events.service import seed_if_needed as seed_events_if_needed
 from app.domains.macro.service import seed_if_needed as seed_macro_if_needed
 from app.domains.market_data.service import live_market_state, seed_if_needed as seed_market_if_needed
@@ -17,7 +18,7 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_models()
+    await run_migrations()
     async with AsyncSessionLocal() as db:
         await seed_market_if_needed(db)
         await live_market_state.init_from_db(db)

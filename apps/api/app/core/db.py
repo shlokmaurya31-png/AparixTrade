@@ -32,7 +32,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_models() -> None:
-    """Create tables from the current models. Dev/demo convenience — production
-    uses Alembic migrations (see apps/api/alembic/)."""
+    """Create tables from the current models directly, bypassing Alembic.
+    Not called by app.main's lifespan (that runs core/migrations.py's
+    run_migrations() as of Tier 1) — kept only as a manual escape hatch for
+    local scratch/one-off scripts that want a schema without touching
+    alembic_version. Never add a column to an existing table and expect
+    this to pick it up: create_all() only creates missing tables (see
+    docs/ARCHITECTURE.md §11) — use a real migration instead."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
