@@ -287,6 +287,12 @@ export interface AdminSystemHealth {
   database_backend: string;
 }
 
+export interface DataQualityFinding {
+  check: string;
+  status: "GOOD" | "WARNING" | "STALE" | "INVALID" | "UNKNOWN";
+  detail: string;
+}
+
 export interface PaperPortfolio {
   id: string;
   name: string;
@@ -486,6 +492,7 @@ export const api = {
     auditLogs: () => request<AdminAuditLog[]>("/api/v1/admin/audit-logs"),
     aiUsage: () => request<AdminAiUsage>("/api/v1/admin/ai-usage"),
     systemHealth: () => request<AdminSystemHealth>("/api/v1/admin/system-health"),
+    dataQuality: () => request<DataQualityFinding[]>("/api/v1/admin/data-quality"),
   },
   paperTrading: {
     portfolio: () => request<PaperPortfolio>("/api/v1/paper/portfolio"),

@@ -2,11 +2,20 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import { AparixBadge } from "@/components/aparix/AparixBadge";
 import { AparixCard } from "@/components/aparix/AparixCard";
 import { AparixMetric } from "@/components/aparix/AparixMetric";
 import { AparixTable } from "@/components/aparix/AparixTable";
-import { api, ApiError, type AdminAuditLog, type AdminUser } from "@/lib/api";
+import { api, ApiError, type AdminAuditLog, type AdminUser, type DataQualityFinding } from "@/lib/api";
 import { useCurrentUser } from "@/lib/use-auth";
+
+const STATUS_TONE: Record<DataQualityFinding["status"], "positive" | "warning" | "negative" | "neutral"> = {
+  GOOD: "positive",
+  WARNING: "warning",
+  STALE: "warning",
+  INVALID: "negative",
+  UNKNOWN: "neutral",
+};
 
 export default function AdminPage() {
   const { data: user, isLoading: userLoading } = useCurrentUser();
@@ -16,6 +25,12 @@ export default function AdminPage() {
   const auditLogs = useQuery({ queryKey: ["admin-audit-logs"], queryFn: api.admin.auditLogs, enabled, retry: false });
   const aiUsage = useQuery({ queryKey: ["admin-ai-usage"], queryFn: api.admin.aiUsage, enabled, retry: false });
   const health = useQuery({ queryKey: ["admin-system-health"], queryFn: api.admin.systemHealth, enabled, retry: false });
+  const dataQuality = useQuery({
+    queryKey: ["admin-data-quality"],
+    queryFn: api.admin.dataQuality,
+    enabled,
+    retry: false,
+  });
 
   if (userLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
@@ -23,14 +38,14 @@ export default function AdminPage() {
     return (
       <AparixCard title="Access denied">
         <p className="text-sm text-muted-foreground">
-          This account isn&rsquo;t in the admin allowlist. Add your email to <code>ADMIN_EMAILS</code> in the API&rsquo;s
-          environment and log in again — see the README.
+          This account isn&rsquo;t an admin. Add your email to <code>ADMIN_EMAILS</code> in the API&rsquo;s
+          environment (or have an existing admin grant the <code>admin</code> role) and log in again — see the README.
         </p>
       </AparixCard>
     );
   }
 
-  const anyError = [users, auditLogs, aiUsage, health].find((q) => q.isError);
+  const anyError = [users, auditLogs, aiUsage, health, dataQuality].find((q) => q.isError);
   if (anyError) {
     return (
       <AparixCard title="Couldn't load admin data">
@@ -70,6 +85,21 @@ export default function AdminPage() {
           />
         </AparixCard>
       </div>
+
+      <AparixCard title="Data quality">
+        <AparixTable<DataQualityFinding>
+          columns={[
+            { header: "Check", render: (f) => f.check },
+            {
+              header: "Status",
+              render: (f) => <AparixBadge tone={STATUS_TONE[f.status]}>{f.status}</AparixBadge>,
+            },
+            { header: "Detail", render: (f) => <span className="text-muted-foreground">{f.detail}</span> },
+          ]}
+          rows={dataQuality.data ?? []}
+          keyFor={(f) => f.check}
+        />
+      </AparixCard>
 
       <AparixCard title="AI usage">
         <div className="mb-3 flex gap-6 text-sm">
