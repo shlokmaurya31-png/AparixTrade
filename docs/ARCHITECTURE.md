@@ -389,6 +389,9 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | `list_securities()` default excludes non-tradable (Tier 1 S8) | Every existing caller (frontend dropdowns, live tick seeding, fundamentals/corporate-actions' own seeding queries) keeps returning only the live tradable universe by default; `include_delisted=True` is opt-in | Adding historical-only securities must never silently change what "all securities" means to code written before they existed — live-verified via Playwright that `/portfolio`/`/options`/`/fundamentals` dropdowns are unaffected | `tests/test_survivorship_bias.py::test_live_universe_excludes_historical_securities`, `test_get_securities_endpoint_excludes_historical_securities` |
 | Hand-rolled rate limiter, not a package (Tier 1 S9) | `FixedWindowRateLimiter` — a plain in-memory dict, no `slowapi`/Redis dependency | Small enough to own directly and correctly, same reasoning as every hand-rolled point-in-time query in this codebase; a real dependency would also imply a shared/multi-process store this app doesn't have | Real, live-verified 429s with a real `Retry-After` — not a stub; documented as single-process-only, matching this app's actual (single-process) architecture |
 | Exception handler sets its own `X-Request-ID` header (Tier 1 S9) | `unhandled_exception_handler()` sets the header directly rather than relying on `RequestIDMiddleware` | A handler registered for the bare `Exception` type runs in Starlette's `ServerErrorMiddleware`, outside `RequestIDMiddleware` — a response built there never passes back through that middleware's own header-attachment line | Caught by a genuine failing test (`KeyError: 'x-request-id'`), not predicted — `tests/test_middleware.py::test_unhandled_exception_returns_a_sanitized_response_with_the_request_id` |
+| No company-to-company supply-chain edges (Tier 1 S10) | The knowledge graph links securities to locations/commodities only — never one security to another | A specific real supplier relationship (e.g. "does Company X supply Company Y") is a materially less certain, less publicly clean fact than a headquarters location, and this session's discipline means leaving an edge type out entirely rather than guessing at a plausible-sounding one | `domains/knowledge_graph/seed_data.py`'s own docstring states this explicitly as a scope boundary, not a silent omission |
+| Consumption-side commodity links only (Tier 1 S10) | Every `SecurityCommodityLink` is `depends_on` — no `produces` relationship, no sign flip | Modeling a producer benefiting from a price spike it's otherwise being shocked by (ONGC + a crude oil event) needs a per-security sign, which wasn't built — a real, disclosed simplification rather than a subtly wrong number | Stated directly in `domains/knowledge_graph/seed_data.py` and `models/knowledge_graph.py`'s docstrings |
+| Graph pass-through resolved outside the pure `apply_shock()` (Tier 1 S10) | `apply_shock()` gained a `graph_exposure: dict[str, float]` parameter — plain data, not a DB call — computed by its (async) callers before the (still sync, still pure) function runs | Keeps `apply_shock()` exactly as hand-fixture-testable as it already was (`tests/test_simulation.py`), rather than making the codebase's most directly-tested pure function async/DB-aware | `tests/test_simulation.py::test_stress_test_graph_exposure_applies_decayed_pass_through` and 3 siblings test it as a pure function, no DB involved |
 
 ## 10. Roadmap
 
@@ -966,6 +969,56 @@ still a real 404, not swallowed into a generic 500) — Starlette dispatches
 to the most specific handler in the exception's MRO, so this was a real
 risk worth a dedicated regression test, not a hypothetical one.
 
+**Session 10 — Financial knowledge graph + event propagation beyond one
+target** (done): the largest remaining item from the original Tier 1
+request's own priority list. `domains/knowledge_graph/` is a small,
+hand-curated graph — real Locations (6 Indian states/UTs) and Commodities
+(crude oil, coal, steel, palm oil), each linked to the securities that
+have a real, well-known headquarters/major-facility location or
+consumption-side commodity dependency (`domains/knowledge_graph/seed_data.py`
+documents the sourcing basis and — importantly — what was deliberately
+left out: no company-to-company supply-chain edges at all, since
+verifying a *specific* real supplier relationship is a materially less
+certain fact than "where is this company headquartered," and no
+producer-side commodity exposure, since modeling ONGC benefiting from a
+crude oil spike would need a per-security sign flip this session didn't
+build). `Event.primary_target` can now be a real location/commodity name,
+not just a symbol/sector/`NIFTY50` — `domains/simulation/stress_test.py::apply_shock()`
+gained an optional `graph_exposure` parameter (still a pure, DB-free,
+hand-fixture-tested function; the async knowledge-graph lookup happens in
+its callers, `domains/events/service.py` and
+`domains/simulation/service.py`, before the pure function is ever
+called), applying a disclosed, decayed pass-through (40% for a location,
+50% for a commodity — honest, illustrative constants, the same kind of
+non-calibrated-but-disclosed assumption as `event_shock_pct()`'s
+severity-magnitude table, not fabricated precision) to every
+indirectly-exposed holding. Two new seeded events
+(a Gujarat cyclone warning, a coal supply disruption) demonstrate real
+multi-security fan-out from one target — live-verified end to end against
+the running server: a portfolio holding RELIANCE, TATAMOTORS, and TCS
+against the Gujarat event correctly shows RELIANCE and TATAMOTORS each
+taking a real decayed hit (both have a real, documented Gujarat
+exposure) and TCS entirely unaffected (it doesn't). `get_graph_exposure`
+is AI tool #22, and `GET /knowledge-graph/exposure/{target}` exposes the
+same resolution directly for inspection. A user's own stress test can
+also target a real location/commodity now (`POST /portfolios/{id}/stress-test`
+with `target: "Gujarat"`), not just events.
+
+**Yet another live instance of the "seed only runs once" gotcha** — the
+fifth this session, but the first time it hit hand-authored event content
+specifically rather than a growing/incremental domain: adding 2 new
+entries to the existing `SEED_EVENTS` list did nothing against this
+repo's real local dev database, because `events` already had rows from
+much earlier in this session, and `seed_events_if_needed()`'s count check
+short-circuits before ever looking at *which* events are present.
+Since `SEED_EVENTS` is a small, fixed, hand-authored list (unlike macro
+vintage/historical-universe/news, which have legitimate reasons to keep
+growing and were fixed by decoupling their seeding), the two new rows
+were backfilled directly into the real dev database with a one-off
+script using the app's own models — the same "fix the real, already-
+affected data, re-verify live" discipline as Session 4's duplicate-event
+cleanup — not a permanent architectural change to event seeding.
+
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
 `docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): a
 document-upload/PDF/filing corpus beyond ingested news articles, an ANN
@@ -977,8 +1030,9 @@ history for corporate actions, `demerger`/`symbol_change`/`isin_change`
 still unseeded even against a historical-only security (schema/logic only,
 tested via synthetic fixtures), restatement tracking (every fundamentals
 statement is `is_restated=False`), real data providers for fundamentals/
-corporate-actions/macro (still `MOCK` only), entity extraction and the
-knowledge-graph step of the news pipeline, a financial knowledge graph
-more broadly, a historical analogue engine, portfolio exposure beyond
-sector, and a real Postgres verification pass (documented but never run
-against a real instance in this environment).
+corporate-actions/macro (still `MOCK` only), entity extraction and a
+company-to-company supply-chain layer for the knowledge graph (real
+headquarters/commodity facts only, no fabricated supplier edges — see
+above), a historical analogue engine, portfolio exposure beyond sector,
+and a real Postgres verification pass (documented but never run against a
+real instance in this environment).

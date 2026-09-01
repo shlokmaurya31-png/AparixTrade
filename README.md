@@ -10,16 +10,23 @@ corporate-actions + macro-vintage + security-universe engine, a real news
 ingestion pipeline that can genuinely fetch and classify a live RSS feed,
 a real RAG foundation — genuine embeddings and cosine-similarity retrieval
 over the ingested news corpus, backing a functional "Researcher" AI
-mode — real rate limiting, request-ID correlation, and structured
-logging — see
+mode — real rate limiting, request-ID correlation, structured logging,
+and a small, real financial knowledge graph (real headquarters/major-
+facility/commodity-dependency facts about the seeded securities) that
+lets a single location or commodity event genuinely fan out to every
+security with a documented exposure, not just one hand-picked target — see
 [`docs/APARIX_TIER1_COMPLETION_REPORT.md`](docs/APARIX_TIER1_COMPLETION_REPORT.md)
 for an honest breakdown of what's real vs. still missing): auth, an
 adaptive dashboard, a portfolio engine, mock Indian market data, a risk &
 simulation engine (VaR/CVaR, Sharpe/Sortino, correlation matrices, Monte
-Carlo, custom stress testing, buy-and-hold backtesting), an event
-intelligence engine (mock news events mapped to sectors/companies with a
-quantified portfolio-impact estimate — the "flood disrupts Reliance's
-Jamnagar operations" scenario, working end to end), a mock macro data
+Carlo, custom stress testing — including a real location/commodity target
+like "Gujarat" or "crude_oil", resolved through the knowledge graph, not
+just a symbol/sector — buy-and-hold backtesting), an event intelligence
+engine (mock news events mapped to sectors/companies/real locations/real
+commodities with a quantified portfolio-impact estimate — the "flood
+disrupts Reliance's Jamnagar operations" scenario, working end to end,
+and now a single location event genuinely fanning out to every security
+with a real, documented exposure to it), a mock macro data
 feed, an admin dashboard (real RBAC with an actual role-management UI and
 per-change audit trail, not just a backend column, plus a data-quality
 view), a paper trading simulator (virtual ₹10L capital, realistic

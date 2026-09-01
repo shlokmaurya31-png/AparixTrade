@@ -1,11 +1,12 @@
-# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–9)
+# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–10)
 
 Written against `docs/APARIX_TIER1_AUDIT.md` (the pre-implementation
 audit) and the Tier 1 infrastructure request's own 64 sections. Honest
 percentages, not aspirational ones — see §61's own instruction not to
-claim 100% unless something genuinely is. Updated after Session 9 (rate
-limiting, request-ID middleware, sanitized error responses); Sessions
-1–8 content below is otherwise unchanged from when it was first written.
+claim 100% unless something genuinely is. Updated after Session 10
+(financial knowledge graph + event propagation beyond one target);
+Sessions 1–9 content below is otherwise unchanged from when it was
+first written.
 
 ## What "Session 1" means
 
@@ -327,6 +328,47 @@ the response never passes back through that middleware's normal
 post-`call_next` line. Caught by `KeyError: 'x-request-id'` in a real
 test run, fixed by having the handler set the header itself.
 
+## Session 10: Financial knowledge graph + event propagation beyond one target
+
+The largest remaining item from the original Tier 1 request's own
+priority list:
+
+| Item | Where | Verification |
+|---|---|---|
+| A small, real, hand-curated knowledge graph | `domains/knowledge_graph/`, `models/knowledge_graph.py` | 6 real Indian states/UTs, 4 real commodities, 21 security-location links and 8 security-commodity links — every one a well-known, publicly documented headquarters/major-facility/consumption-side fact, sourced and scoped in `seed_data.py`'s own docstring |
+| `apply_shock()` gains graph-based propagation | `domains/simulation/stress_test.py` | Still a pure, DB-free, hand-fixture-tested function — `tests/test_simulation.py` (4 new tests) proves a location/commodity target applies a decayed pass-through to indirectly-exposed holdings and leaves everything else exactly as before |
+| Real event → multi-security fan-out | `domains/events/service.py`, 2 new seeded events (Gujarat cyclone, coal supply disruption) | Live-verified against the running server: a portfolio holding RELIANCE/TATAMOTORS/TCS against the Gujarat event shows RELIANCE and TATAMOTORS each taking a real decayed hit and TCS correctly unaffected — not a hypothetical, an actual HTTP response with real numbers |
+| A user's own stress test can target a location/commodity too | `domains/simulation/service.py::run_stress_test()` | `tests/test_knowledge_graph.py::test_stress_test_tool_accepts_a_location_target` |
+| `GET /knowledge-graph/exposure/{target}`, AI tool `get_graph_exposure` (#22) | `domains/knowledge_graph/router.py`, `domains/ai/tools.py` | `tests/test_knowledge_graph.py` (13 tests); live-verified via curl; AI integration test |
+
+Test count (end of Session 10): **311 passing** (+17 over Session 9's
+294; 0 regressions).
+
+**Deliberately scoped to one hop, not the full "location → industry →
+company → supply-chain → commodity → macro" chain the fullest version of
+this idea could reach:** no company-to-company supply-chain edges were
+seeded at all — verifying a *specific* real supplier relationship between
+two of these companies is a materially less certain, less publicly clean
+fact than "where is this company headquartered," and this session's
+"never fabricate" discipline means leaving that edge type out entirely
+rather than guessing at a plausible-sounding one. Also deliberately
+consumption-side only for commodities (no producer-side sign flip — see
+Architecture decisions).
+
+**A live instance of the "seed only runs once" gotcha — the fifth this
+session, but the first time it hit hand-authored event content
+specifically:** adding 2 new entries to `SEED_EVENTS` did nothing against
+this repo's real local dev database, since `events` already had rows and
+`seed_events_if_needed()`'s count check short-circuits before checking
+*which* events are present. Fixed by backfilling the real dev database
+directly with a one-off script using the app's own models (46 users, all
+existing data, unaffected) — the same "fix the real already-affected
+data, re-verify live" discipline as Session 4's duplicate-event cleanup,
+not a permanent architectural change, since `SEED_EVENTS` is a small,
+fixed, hand-authored list unlike the genuinely-growing domains (macro
+vintage, historical universe, news) that were fixed by decoupling their
+seeding instead.
+
 ## Partially implemented
 
 - **Provenance** only covers 2 of the many data shapes this app serves
@@ -364,13 +406,19 @@ test run, fixed by having the handler set the header itself.
   schema/logic-only, tested via synthetic fixtures (Session 3), with no
   seeded example against even a historical-only security yet.
 - ~~Real news ingestion pipeline~~ — **done in Session 4**, see above.
-  Entity extraction and the knowledge-graph step of the full spec pipeline
-  are still missing (next item).
-- Event propagation beyond one target (no location → industry → company →
-  supply-chain → commodity → macro chain). News ingestion creates a real
-  single-target `Event` (Session 4); it doesn't extract entities or
-  propagate through a graph.
-- Financial knowledge graph (entities + typed relationships), and its API.
+  Entity extraction from news articles into the knowledge graph is still
+  missing — Session 10's graph is a small, hand-curated seed, not one
+  built from ingested content.
+- ~~Event propagation beyond one target~~ — **done in Session 10** for a
+  location/commodity primary_target, see above, via the new knowledge
+  graph. The full "location → industry → company → supply-chain →
+  commodity → macro" multi-node chain the fullest version of this idea
+  could reach is still not built — deliberately one hop, no
+  company-to-company supply-chain edges (see Session 10, above).
+- ~~Financial knowledge graph (entities + typed relationships), and its
+  API~~ — **done in Session 10**, see above, scoped to a small,
+  hand-curated set of real location/commodity facts about the seeded
+  securities, not entity extraction from ingested content.
 - ~~Document intelligence / RAG~~ — **done in Session 6** for the ingested
   news corpus (real embeddings, real cosine-similarity retrieval, a real
   `researcher` mode), see above. Still missing: a document-upload/PDF/
@@ -460,6 +508,19 @@ test run, fixed by having the handler set the header itself.
   that narrower case was addressed via a prompt-instruction change instead,
   consistent with the project's existing "best-effort, not exhaustive"
   guardrail philosophy (see `docs/ARCHITECTURE.md` Phase 3.5 trade-offs).
+- **The knowledge graph has no company-to-company supply-chain edges at
+  all** (Session 10) — not because they'd be hard to model, but because a
+  *specific* real supplier relationship between two of the seeded
+  companies is a materially less certain, less publicly clean fact than
+  "where is this company headquartered." Consistent with this whole
+  session's discipline: an uncertain fact is left out, not guessed at
+  because it sounds plausible.
+- **Commodity exposure is consumption-side only, with no producer sign
+  flip** (Session 10): ONGC is not modeled as benefiting from a crude oil
+  price spike, even though that's realistically true — doing so correctly
+  would need a per-security sign on top of the shock direction, which
+  wasn't built. A real, disclosed simplification (stated directly in the
+  seed data's own docstring), not a silently wrong number.
 
 ## Data sources (see `docs/DATA_LICENSING.md` for the full table)
 
@@ -524,17 +585,22 @@ external data source and changed no licensing posture.
 
 In rough dependency order, matching what actually unblocks the most:
 
-1. **Financial knowledge graph** (entities + typed relationships) and
-   **event propagation beyond one target** — the two largest remaining
-   items from the original Tier 1 request's own priority list, both still
-   essentially unstarted.
-2. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
+1. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
    beyond news articles, now that Session 6 has a real embedding+retrieval
    foundation to extend rather than build from scratch.
-3. **A real Postgres verification pass** — the migration path is
+2. **A real Postgres verification pass** — the migration path is
    documented (`docs/DATABASE_MIGRATION.md`) but has never actually been
    run against a real Postgres instance in this environment, still
    SQLite-only in every session's own verification so far.
+3. **Entity extraction from ingested news into the knowledge graph** — a
+   real, separate effort now that both a real news pipeline (Session 4)
+   and a real, if small, knowledge graph (Session 10) exist independently;
+   connecting them (an ingested article about a real event automatically
+   identifying which seeded locations/commodities/securities it concerns,
+   rather than a human hand-picking `primary_target`) is genuinely
+   unstarted.
+4. **A historical analogue engine** — still not attempted; this codebase
+   has no real historical crisis dataset to build one against honestly.
 
 ## Production readiness score
 
@@ -546,14 +612,14 @@ for:
 
 | Area | Readiness | Why |
 |---|---|---|
-| Core architecture (domain structure, provider pattern, testing discipline) | **~87%** | Genuinely solid — real migrations, RBAC, five independent real point-in-time query engines (fundamentals, corporate actions, macro vintage, news classification, and security-universe membership itself), a real external-data ingestion pipeline, a real embedding/retrieval layer, and now real rate limiting/request-ID correlation; still missing a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
+| Core architecture (domain structure, provider pattern, testing discipline) | **~88%** | Genuinely solid — real migrations, RBAC, five independent real point-in-time query engines, a real external-data ingestion pipeline, a real embedding/retrieval layer, real rate limiting/request-ID correlation, and now a real (if small) knowledge graph with genuine multi-security event propagation; still missing a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
 | Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~65%** | Point-in-time enforcement now exists for four data domains (fundamentals, corporate actions, macro vintage, security universe) plus news's real-vs-classified distinction, each with a regression test proving no future-data leak — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, and macro's point-in-time discipline covers 2 of 7 indicators (correctly — the other 5 have no revision concept to enforce) |
 | Actual financial data (market/fundamentals/macro/news/corporate actions) | **~25%** | Macro now has real revision/vintage history for the 2 indicators that genuinely have one, alongside fundamentals/corporate-actions' real point-in-time engines and news's one real external source (gated off by default). Still entirely synthetic underneath: no real market-data, fundamentals, or macro vendor integration |
-| Knowledge graph / event intelligence / RAG | **~15%** | News ingestion creates real single-target events (a narrow slice of "event intelligence"); RAG now has a real embedding+retrieval foundation over the real news corpus (Session 6) — still no entity extraction, no propagation graph, no knowledge graph, and the RAG corpus is one document domain, not the broader knowledge base the full spec describes |
+| Knowledge graph / event intelligence / RAG | **~28%** | A real, if small and hand-curated, knowledge graph now drives genuine multi-security event propagation (Session 10) — location/commodity events fan out to every security with a real, documented exposure, not just one hand-picked target; RAG has a real embedding+retrieval foundation over the real news corpus (Session 6). Still missing: entity extraction connecting the two (an ingested article automatically identifying its own graph targets), company-to-company supply-chain edges, and the RAG corpus is one document domain |
 | Security (RBAC, encryption, rate limiting, audit) | **~60%** | RBAC has a real, guarded management UI and a real per-change audit trail (Session 7); credential encryption is real; rate limiting, request-ID correlation, and sanitized error responses are now real too (Session 9), though the rate limiter is single-process-only |
 | Regulatory posture | **~50%** | The education/analytics/advisory/execution boundary is genuinely maintained in product copy and this doc set — but that discipline has never been reviewed by an actual compliance professional, which the request itself says is required before anything resembling real advice or execution ships |
 
-**Overall: nine sessions in, the foundation is meaningfully stronger
+**Overall: ten sessions in, the foundation is meaningfully stronger
 (schema-drift risk fixed, real RBAC with a real management UI and audit
 trail, a real provenance/quality seam, five independent point-in-time
 query engines each proven against an actual leak scenario — including
@@ -561,28 +627,34 @@ universe *membership itself*, not just a single security's own data — a
 real external news pipeline verified against a live government feed,
 real macro revision/vintage history for the two indicators that genuinely
 have one, a real embedding/retrieval layer with a genuinely functional
-`researcher` AI mode, and now real rate limiting/request-ID correlation/
-structured logging) without adding a single line of fake functionality.
-A real plausibility bug (P/E ~1667) was caught and fixed during live
-verification in Session 2; a real duplicate-event bug was caught and
-fixed in Session 4; Session 5 caught the same "seed only runs once"
-gotcha a third time and, separately, a test that was asserting something
-unrealistic rather than something wrong; Session 6 caught a real
-tool-argument crash and, more importantly, a real gap in the
-hallucination guardrail itself (a failed tool call wasn't being treated
-as ungrounded) — caught by actually watching the local model fabricate
-citations live, not by inspection, and fixed the same day; Session 7's
-own live verification surfaced an apparent hydration-error console
-message that turned out to be a direct-URL-navigation artifact, not a
-real regression; Session 8 caught the same "seed only runs once" gotcha
-a fourth time, this time as a cross-domain seeding-order dependency,
-caught at design time rather than live; Session 9 empirically verified a
-claimed gap (error-response sanitization) turned out to already be
-satisfied by the framework default rather than assuming it needed
-fixing, and separately learned and then verified (via a genuine failing
-test, not a guess) a real Starlette internal about where a bare-`Exception`
-handler actually runs in the middleware stack. But "Aparix,
-the financial intelligence operating system for India" is still,
-honestly, mostly ahead of this codebase, not behind it — the knowledge
-graph is still essentially unstarted, and RAG covers exactly one document
-domain.**
+`researcher` AI mode, real rate limiting/request-ID correlation/
+structured logging, and now a real — if small and honestly scoped —
+knowledge graph driving genuine multi-security event propagation) without
+adding a single line of fake functionality. A real plausibility bug (P/E
+~1667) was caught and fixed during live verification in Session 2; a real
+duplicate-event bug was caught and fixed in Session 4; Session 5 caught
+the same "seed only runs once" gotcha a third time and, separately, a
+test that was asserting something unrealistic rather than something
+wrong; Session 6 caught a real tool-argument crash and, more importantly,
+a real gap in the hallucination guardrail itself (a failed tool call
+wasn't being treated as ungrounded) — caught by actually watching the
+local model fabricate citations live, not by inspection, and fixed the
+same day; Session 7's own live verification surfaced an apparent
+hydration-error console message that turned out to be a direct-URL-
+navigation artifact, not a real regression; Session 8 caught the same
+"seed only runs once" gotcha a fourth time, this time as a cross-domain
+seeding-order dependency, caught at design time rather than live;
+Session 9 empirically verified a claimed gap (error-response
+sanitization) turned out to already be satisfied by the framework
+default rather than assuming it needed fixing, and separately learned
+and then verified (via a genuine failing test, not a guess) a real
+Starlette internal about where a bare-`Exception` handler actually runs
+in the middleware stack; Session 10 hit the same "seed only runs once"
+gotcha a fifth time — this time against its own hand-authored event
+content, fixed by directly backfilling the real dev database rather than
+a permanent architectural change, since a fixed, small, hand-authored
+list doesn't have the same "must be decoupled" property as a genuinely
+growing domain. But "Aparix, the financial intelligence operating system
+for India" is still, honestly, mostly ahead of this codebase, not behind
+it — entity extraction still doesn't connect the real news pipeline to
+the real knowledge graph, and RAG covers exactly one document domain.**
