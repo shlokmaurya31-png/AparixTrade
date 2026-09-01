@@ -341,6 +341,54 @@ export interface OrderEvaluation {
   is_mock: boolean;
 }
 
+export interface BrokerStatus {
+  connected: boolean;
+  broker: string | null;
+  status: "connected" | "expired" | null;
+  broker_user_id: string | null;
+  connected_at: string | null;
+  last_synced_at: string | null;
+  live_trading_enabled: boolean;
+}
+
+export interface BrokerLoginUrl {
+  broker: string;
+  login_url: string;
+}
+
+export interface BrokerHolding {
+  symbol: string;
+  name: string;
+  sector: string;
+  quantity: number;
+  avg_price: number;
+  last_price: number;
+  market_value: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+}
+
+export interface BrokerPortfolio {
+  id: string;
+  name: string;
+  holdings: BrokerHolding[];
+  total_value: number;
+  is_mock: boolean;
+}
+
+export interface BrokerSyncResult {
+  synced_holdings: number;
+  skipped_symbols: string[];
+  synced_at: string;
+}
+
+export interface BrokerOrderResult {
+  broker_order_id: string;
+  status: string;
+  fill_price: number | null;
+  message: string | null;
+}
+
 // ── API surface ─────────────────────────────────────────────────────────
 
 export const api = {
@@ -421,5 +469,19 @@ export const api = {
       request<PaperOrder>("/api/v1/paper/portfolio/orders", { method: "POST", body: JSON.stringify(payload) }),
     evaluateOrder: (orderId: string) =>
       request<OrderEvaluation>(`/api/v1/paper/portfolio/orders/${orderId}/evaluation`),
+  },
+  broker: {
+    status: () => request<BrokerStatus>("/api/v1/broker/status"),
+    loginUrl: () => request<BrokerLoginUrl>("/api/v1/broker/login-url"),
+    connect: (requestToken?: string) =>
+      request<BrokerStatus>("/api/v1/broker/connect", {
+        method: "POST",
+        body: JSON.stringify({ request_token: requestToken ?? null }),
+      }),
+    disconnect: () => request<void>("/api/v1/broker/disconnect", { method: "DELETE" }),
+    sync: () => request<BrokerSyncResult>("/api/v1/broker/sync", { method: "POST" }),
+    portfolio: () => request<BrokerPortfolio>("/api/v1/broker/portfolio"),
+    placeOrder: (payload: { symbol: string; side: "buy" | "sell"; quantity: number }) =>
+      request<BrokerOrderResult>("/api/v1/broker/orders", { method: "POST", body: JSON.stringify(payload) }),
   },
 };

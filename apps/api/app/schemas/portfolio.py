@@ -5,7 +5,13 @@ from pydantic import BaseModel, Field
 
 class CreatePortfolioRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    kind: str = Field(default="long_term", pattern="^(long_term|trading|options|paper|experimental)$")
+    # "paper" and "broker" are excluded here on purpose — both are singleton
+    # accounts lazily created by their own domain service
+    # (get_or_create_paper_portfolio / get_or_create_broker_portfolio), not
+    # user-createable via this generic endpoint. A DB-level unique index
+    # enforces "one per user" for each; going through this endpoint with
+    # kind="paper"/"broker" would just 500 on the second attempt.
+    kind: str = Field(default="long_term", pattern="^(long_term|trading|options|experimental)$")
 
 
 class PortfolioOut(BaseModel):

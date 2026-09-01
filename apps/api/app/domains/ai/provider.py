@@ -103,6 +103,10 @@ class MockModelProvider(ModelProvider):
             data = await use("evaluate_order")
             text = self._evaluate_order_text(data, mode)
 
+        elif any(k in lowered for k in ["broker", "zerodha", "kite", "linked account"]):
+            data = await use("get_broker_holdings")
+            text = self._broker_holdings_text(data, mode)
+
         elif any(k in lowered for k in ["sector", "concentrat", "diversif"]):
             data = await use("get_sector_exposure")
             text = self._sector_exposure_text(data["sector_exposure"], mode)
@@ -360,6 +364,21 @@ class MockModelProvider(ModelProvider):
                 f"brokerage {data['brokerage_fee']:.2f} INR). {range_note} {data['assumptions']} [DEMO DATA]"
             )
         return f"You {data['side']} at {data['fill_price']:.2f} INR. {range_note} {data['assumptions']} [DEMO DATA]"
+
+    @staticmethod
+    def _broker_holdings_text(data: dict, mode: str) -> str:
+        if "error" in data:
+            return f"{data['error']} [DEMO DATA]"
+        mock_note = " (a simulated connection — no real brokerage is linked)" if data["is_mock"] else ""
+        if not data["holdings"]:
+            return f"Your {data['broker']} account is connected but has no holdings{mock_note}. [DEMO DATA]"
+        if mode == "quant":
+            lines = ", ".join(f"{h['symbol']} {h['quantity']}@{h['avg_price']:.2f}" for h in data["holdings"])
+            return f"{data['broker']} holdings{mock_note}: {lines}. Total value {data['total_value']:.2f} INR. [DEMO DATA]"
+        return (
+            f"Your {data['broker']} account{mock_note} holds {len(data['holdings'])} positions worth about "
+            f"{data['total_value']:.0f} INR. [DEMO DATA]"
+        )
 
     @staticmethod
     def _biggest_holding_text(holdings: list[dict], mode: str) -> str:

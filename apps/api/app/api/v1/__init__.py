@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.domains.admin.router import router as admin_router
 from app.domains.ai.router import router as ai_router
 from app.domains.auth.router import router as auth_router
+from app.domains.broker.router import router as broker_router
 from app.domains.events.router import router as events_router
 from app.domains.macro.router import router as macro_router
 from app.domains.market_data.router import router as market_router
@@ -23,4 +24,5 @@ api_v1_router.include_router(events_router)
 api_v1_router.include_router(macro_router)
 api_v1_router.include_router(admin_router)
 api_v1_router.include_router(paper_trading_router)
+api_v1_router.include_router(broker_router)
 api_v1_router.include_router(ai_router)

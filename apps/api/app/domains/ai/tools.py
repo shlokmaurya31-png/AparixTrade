@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.broker import service as broker_service
 from app.domains.events import service as events_service
 from app.domains.macro.service import list_indicators
 from app.domains.market_data.service import get_security_by_symbol, live_market_state
@@ -171,6 +172,23 @@ async def evaluate_order_tool(db: AsyncSession, portfolio: Portfolio, order_id: 
     return await paper_trading_service.evaluate_order(db, order)
 
 
+async def get_broker_holdings_tool(db: AsyncSession, portfolio: Portfolio, **_: Any) -> dict:
+    # Same pattern as preview_trade_tool/evaluate_order_tool — resolves the
+    # user's broker-linked account via user_id, not whatever portfolio the
+    # AI Terminal session happens to be scoped to.
+    status = await broker_service.get_status(db, portfolio.user_id)
+    if status is None or status.status != "connected":
+        return {"error": "No broker account is connected. Connect one on the Broker page first."}
+    broker_portfolio = await broker_service.get_or_create_broker_portfolio(db, portfolio.user_id)
+    holdings = await broker_service.get_broker_holdings_view(db, broker_portfolio)
+    return {
+        "broker": status.broker,
+        "holdings": holdings,
+        "total_value": round(sum(h["market_value"] for h in holdings), 2),
+        "is_mock": broker_service.get_broker_adapter().name == "mock",
+    }
+
+
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_portfolio": get_portfolio_tool,
     "get_holdings": get_holdings_tool,
@@ -185,6 +203,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_macro_indicators": get_macro_indicators_tool,
     "preview_trade": preview_trade_tool,
     "evaluate_order": evaluate_order_tool,
+    "get_broker_holdings": get_broker_holdings_tool,
 }
 
 

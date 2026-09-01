@@ -1,7 +1,7 @@
 # Aparix
 
 AI-native Indian financial intelligence platform. **Phase 1 + 2 + 3 + 3.5 +
-4**: auth, an adaptive dashboard, a portfolio engine, mock Indian market
+4 + 5**: auth, an adaptive dashboard, a portfolio engine, mock Indian market
 data, a risk & simulation engine (VaR/CVaR, Sharpe/Sortino, correlation
 matrices, Monte Carlo, custom stress testing, buy-and-hold backtesting), an
 event intelligence engine (mock news events mapped to sectors/companies
@@ -9,12 +9,17 @@ with a quantified portfolio-impact estimate — the "flood disrupts
 Reliance's Jamnagar operations" scenario, working end to end), a mock macro
 data feed, a read-only admin dashboard, a paper trading simulator (virtual
 ₹10L capital, realistic slippage/brokerage, cash-constrained buy/sell — no
-real money, no real broker), and an AI Terminal that actually understands
-free-form questions — a real local LLM (Ollama, `llama3.1`) calling the
-same tool registry every number in this app already traces back to,
-including a pre-trade preview and a post-trade entry-quality coach, never
-inventing a figure. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for
-the full design, trade-offs, and Phase 5–6 roadmap.
+real money, no real broker), a broker connection layer (`BrokerAdapter`
+interface — a simulated demo broker out of the box, a real Zerodha Kite
+Connect adapter built to spec for when you have real credentials, encrypted
+credential storage, and live order placement kept off by default even once
+connected), and an AI Terminal that actually understands free-form
+questions — a real local LLM (Ollama, `llama3.1`) calling the same tool
+registry every number in this app already traces back to, including a
+pre-trade preview, a post-trade entry-quality coach, and real broker
+holdings, never inventing a figure. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design,
+trade-offs, and Phase 6 roadmap.
 
 Everything here runs locally with **no paid APIs, no Docker, and no external
 accounts** — SQLite for the database, a seeded synthetic market for prices,
@@ -54,9 +59,12 @@ RELIANCE holding on `/portfolio`, then check `/events` — the seeded
 holding. Also explore `/risk` (VaR/CVaR, correlation matrix, stress test,
 Monte Carlo, backtest), `/paper` (virtual-capital order ticket — preview a
 buy/sell before committing, see real slippage and brokerage, then ask the
-AI coach how the fill looked), and the AI Terminal at `/ai` — try "what's
-happening in the market", "how does this event affect my portfolio",
-"should I buy RELIANCE", or "stress test my portfolio".
+AI coach how the fill looked), `/broker` (click "Connect broker (demo)" to
+simulate linking a brokerage account, then "Sync holdings" to pull its
+holdings into a read-only portfolio), and the AI Terminal at `/ai` — try
+"what's happening in the market", "how does this event affect my
+portfolio", "should I buy RELIANCE", "what's in my broker account", or
+"stress test my portfolio".
 
 To see the admin dashboard: add your account's email to `ADMIN_EMAILS` in
 `apps/api/.env`, restart the API, and log in again — an "Admin" nav item
@@ -70,10 +78,22 @@ Officer/Portfolio Manager/Macro Economist) become clickable and genuinely
 change response style — the first request in a session is slow (~15s, cold
 model load), after that it's a few seconds per reply.
 
+**To connect a real Zerodha account** (optional — the demo broker above
+needs none of this): generate a `BROKER_ENCRYPTION_KEY` with
+`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+and set it in `apps/api/.env`, get a Kite Connect API key/secret from
+[developers.kite.trade](https://developers.kite.trade) (paid subscription)
+and set `ZERODHA_API_KEY`/`ZERODHA_API_SECRET`, then set
+`BROKER_PROVIDER=zerodha` and restart the API. This wires in the real OAuth
+login + holdings sync; it hasn't been tested against a live Kite account in
+this build (see `docs/ARCHITECTURE.md` §9) — verify a real connect + sync
+before relying on it. Live order placement stays off
+(`BROKER_LIVE_TRADING_ENABLED=false`) until you explicitly turn it on.
+
 ## Test
 
 ```bash
-cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + admin + AI-provider fixtures/flows
+cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + admin + paper trading + broker + AI-provider fixtures/flows
 npm run build -w web                # production build + strict TS check
 npm run lint -w web
 ```
@@ -87,7 +107,8 @@ docs/       Architecture doc
 docker-compose.yml   Optional Postgres for local dev if you have Docker
 ```
 
-All market data, events, macro data, and AI responses in this build are
-clearly labeled `DEMO DATA` / mock in the UI — nothing here is a live feed,
-real news, or a real broker connection. See `docs/ARCHITECTURE.md` §9 for
-why, and what Phase 4+ adds.
+All market data, events, macro data, AI responses, and the default broker
+connection in this build are clearly labeled `DEMO DATA` / mock in the UI —
+nothing here is a live feed, real news, or (unless you've wired in real
+Zerodha credentials and explicitly enabled live trading) a real broker
+connection. See `docs/ARCHITECTURE.md` §9 for why, and what Phase 6 adds.

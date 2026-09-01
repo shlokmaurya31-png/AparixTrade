@@ -34,6 +34,32 @@ class Settings(BaseSettings):
     # — this is a placeholder allowlist, not a real roles/permissions model.
     admin_emails: str = ""
 
+    # Broker integration (Phase 5) — see domains/broker/. Mirrors the
+    # AI_PROVIDER pattern: checked-in default is "mock" (zero external
+    # deps), "zerodha" activates the real Kite Connect adapter once
+    # credentials are supplied below.
+    broker_provider: str = "mock"
+
+    # Fernet key (44-char urlsafe-base64, e.g. `Fernet.generate_key()`) used
+    # to encrypt broker credentials/tokens at rest — see core/crypto.py. No
+    # secure default is possible; a broker connect attempt with this unset
+    # fails loudly rather than silently storing secrets in plaintext.
+    broker_encryption_key: str | None = None
+
+    # Zerodha Kite Connect app credentials (https://developers.kite.trade) —
+    # only meaningful when broker_provider == "zerodha". api_secret is used
+    # once per login to compute the Kite token-exchange checksum; it's read
+    # from env, never stored in the DB.
+    zerodha_api_key: str | None = None
+    zerodha_api_secret: str | None = None
+    zerodha_redirect_url: str = "http://localhost:3000/broker/callback"
+
+    # Real order placement through a connected broker stays off even once
+    # zerodha is wired with real credentials — flipping this on is a
+    # separate, deliberate decision, not a side effect of configuring
+    # credentials. See docs/ARCHITECTURE.md Phase 5 trade-offs.
+    broker_live_trading_enabled: bool = False
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

@@ -193,6 +193,17 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_broker_holdings",
+            "description": (
+                "Get the user's real broker-linked account holdings (synced from a connected brokerage, "
+                "e.g. Zerodha), separate from the paper trading account. Returns an error if no broker is connected."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 _SCHEMA_NAMES = {schema["function"]["name"] for schema in TOOL_SCHEMAS}

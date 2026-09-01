@@ -25,6 +25,19 @@ class Portfolio(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             sqlite_where=text("kind = 'paper'"),
             postgresql_where=text("kind = 'paper'"),
         ),
+        # Same "one singleton account per user" constraint as paper trading
+        # above, applied to broker-linked portfolios from the start —
+        # domains/broker/service.py's get_or_create_broker_portfolio()
+        # follows the identical catch-IntegrityError-and-re-read pattern
+        # that Phase 4 only added *after* hitting the race live. See
+        # docs/ARCHITECTURE.md §11 "get or create" concurrency note.
+        Index(
+            "ix_portfolios_one_broker_per_user",
+            "user_id",
+            unique=True,
+            sqlite_where=text("kind = 'broker'"),
+            postgresql_where=text("kind = 'broker'"),
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)

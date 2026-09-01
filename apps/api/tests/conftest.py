@@ -4,12 +4,15 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 
 TEST_DB_PATH = Path(__file__).parent / f"test_{uuid.uuid4().hex}.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
 os.environ["AI_PROVIDER"] = "mock"
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-not-for-production"
+os.environ["BROKER_PROVIDER"] = "mock"
+os.environ["BROKER_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 from app.main import app, lifespan  # noqa: E402
 

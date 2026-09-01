@@ -1,8 +1,8 @@
 # Aparix — Architecture
 
 Aparix is an AI-native Indian financial intelligence platform. This document
-describes the system as built (Phase 1 + 2 + 3 + 3.5 + 4, scoped) and the
-shape it is designed to grow into (Phase 5–6). It is intentionally condensed
+describes the system as built (Phase 1 + 2 + 3 + 3.5 + 4 + 5, scoped) and the
+shape it is designed to grow into (Phase 6). It is intentionally condensed
 — the full product spec this was derived from runs to ~80 sections; this
 document captures the decisions that matter for engineers picking up the
 codebase.
@@ -77,7 +77,7 @@ docker-compose.yml   Optional Postgres (+ Redis, commented out) for those with D
 
 Domain modules inside `apps/api/app/domains/`: `auth`, `users`, `portfolios`,
 `market_data`, `risk`, `simulation`, `events`, `macro`, `admin`,
-`paper_trading`, `ai`, `audit`. Each is self-contained
+`paper_trading`, `broker`, `ai`, `audit`. Each is self-contained
 (models it owns, its own service layer, its own router) so it can be
 extracted into a separate service later without a rewrite — but this stays a
 single deployable FastAPI app (spec's own guidance: don't create
@@ -150,6 +150,21 @@ microservices before you need them).
   verification, fixed with a DB-level unique partial index
   (`ix_portfolios_one_paper_per_user`) plus an insert/catch/re-read pattern
   — see §9 and §11.
+- **`BrokerAdapter`** interface (`domains/broker/adapter.py`, Phase 5) —
+  mirrors the `ModelProvider` pattern: `MockBrokerAdapter` (checked-in
+  default, simulates a connected account with a fixed seeded holdings set,
+  zero external deps) and `ZerodhaKiteAdapter`
+  (`domains/broker/zerodha_adapter.py`) implementing the real Kite Connect
+  v3 OAuth handshake and REST calls against `https://api.kite.trade`,
+  selected by `BROKER_PROVIDER`. Credentials/tokens are encrypted at rest
+  (`core/crypto.py`, Fernet, `BROKER_ENCRYPTION_KEY`) — the first time this
+  codebase encrypts anything beyond one-way password hashing. A connected
+  broker's holdings sync into a per-user `kind="broker"` portfolio
+  (`domains/broker/service.py::sync_holdings`) that exactly mirrors the
+  broker's truth (upsert + delete stale rows) and is read-only in-app — see
+  §9. Real order placement through a connected broker is gated behind
+  `BROKER_LIVE_TRADING_ENABLED` (default `false`), independent of whether
+  real credentials are configured.
 
 ## 5. Database
 
@@ -160,10 +175,12 @@ specifically so this swap is a connection-string change plus an Alembic
 migration, not a rewrite — see the Trade-offs note below.
 
 Tables: `users`, `user_preferences`, `portfolios` (now with a nullable
-`cash_balance`, only used by `kind="paper"`), `securities`, `candles`,
-`holdings`, `transactions` (now with a nullable `order_id`), `ai_sessions`,
-`ai_messages`, `ai_tool_calls`, `audit_logs`, `backtests`, `events`,
-`macro_indicators`, `orders`. No speculative
+`cash_balance`, only used by `kind="paper"`, and unique partial indexes
+enforcing one `paper` and one `broker` portfolio per user), `securities`,
+`candles`, `holdings`, `transactions` (now with a nullable `order_id`),
+`ai_sessions`, `ai_messages`, `ai_tool_calls`, `audit_logs`, `backtests`,
+`events`, `macro_indicators`, `orders`, `broker_connections` (Phase 5 —
+encrypted credential/token columns, never plaintext). No speculative
 columns for unbuilt features (e.g.
 no `broker_account_id` sitting unused on `portfolios`) — those get added
 when the feature they support gets built.
@@ -214,20 +231,23 @@ User message → /api/v1/ai/chat
              → response returned to client
 ```
 
-**Tool registry** (`domains/ai/tools.py`, 13 tools): `get_portfolio`,
+**Tool registry** (`domains/ai/tools.py`, 14 tools): `get_portfolio`,
 `get_holdings`, `get_sector_exposure`, `get_market_data` (Phase 1);
 `get_risk_profile`, `run_stress_test`, `run_monte_carlo`, `run_backtest`
 (Phase 2); `get_events`, `get_event_impact`, `get_macro_indicators`
 (Phase 3); `preview_trade`, `evaluate_order` (Phase 4 — the AI trading
-coach). Both providers call the exact same functions — one JSON-schema
-description per tool for the LLM (`domains/ai/tool_schemas.py`), checked
-against `TOOL_REGISTRY` at import time (`assert_schemas_match_registry()`) so
-a tool added to one without the other fails loudly at startup, not silently
-at runtime. `preview_trade`/`evaluate_order` deliberately ignore which
+coach); `get_broker_holdings` (Phase 5). Both providers call the exact same
+functions — one JSON-schema description per tool for the LLM
+(`domains/ai/tool_schemas.py`), checked against `TOOL_REGISTRY` at import
+time (`assert_schemas_match_registry()`) so a tool added to one without the
+other fails loudly at startup, not silently at runtime. `preview_trade`/
+`evaluate_order`/`get_broker_holdings` all deliberately ignore which
 portfolio the AI Terminal session is scoped to and resolve the user's paper
-trading account instead (via the active portfolio's `user_id`) — that's the
-only account real orders execute against, regardless of which portfolio the
-conversation happens to be discussing.
+trading or broker account instead (via the active portfolio's `user_id`) —
+those are the only accounts real/simulated orders and real broker holdings
+resolve against, regardless of which portfolio the conversation happens to
+be discussing. `get_broker_holdings` returns an honest error (not a
+fabricated empty list) when no broker is connected.
 
 **`OllamaModelProvider`** (`domains/ai/ollama_provider.py`, Phase 3.5): a
 real agentic loop, capped at `MAX_TOOL_ROUNDS=4` — model returns tool_calls,
@@ -293,6 +313,12 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Paper portfolio creation (Phase 4) | Lazily created (seeded with ₹10L virtual capital) the first time `get_or_create_paper_portfolio()` is called, not at onboarding | Avoids cluttering onboarding with a decision most users won't touch immediately | First `/paper` visit (or first AI coach question about a trade) silently provisions the account — no separate "set up paper trading" step |
 | Post-trade coach scope (Phase 4) | Immediate entry-quality evaluation only — fill price vs. the last 30 trading days' range, not "how did this trade turn out" | No scheduled/delayed re-evaluation mechanism exists in this codebase | `evaluate_order`'s response explicitly states it isn't judging the eventual outcome — the spec's fuller delayed-review vision is future work, not faked with a placeholder number |
 | Paper-portfolio concurrency fix (Phase 4) | DB-level partial unique index (`ix_portfolios_one_paper_per_user`) plus catch-`IntegrityError`-and-re-read in `get_or_create_paper_portfolio()`, instead of relying on application-level locking | A real race was hit live during Phase 4 browser verification: `/paper`'s `portfolio` and `orders` queries both call the same "get or create" function independently on page mount, and without synchronization both could see "none exists" and both insert, corrupting the account into two rows and crashing later lookups with `MultipleResultsFound` | Any future "get or create" style idempotent operation in this codebase should use the same pattern (unique constraint + catch + re-read), not assume a single caller — see §11 |
+| Broker Kite Connect testing (Phase 5) | `ZerodhaKiteAdapter` built to the documented Kite Connect v3 API contract (httpx calls, no vendor SDK), but never exercised against a live account | Kite Connect requires a paid (₹2000/mo) developer subscription and a registered app — not available in this build environment | Treat it as "implemented to spec, unverified" — wire in real `ZERODHA_API_KEY`/`ZERODHA_API_SECRET` and do a real connect + holdings sync before trusting it in production |
+| Broker credential encryption (Phase 5) | Application-layer Fernet symmetric encryption (`core/crypto.py`, `BROKER_ENCRYPTION_KEY`), not DB-level encryption | SQLite has no column-level encryption, and this needs to behave identically once Postgres is swapped in — encrypting in Python before the value ever reaches the DB works the same either way | A `/broker/connect` call fails loudly (`EncryptionNotConfiguredError`) rather than silently storing a plaintext credential if the key isn't set |
+| Live broker trading gate (Phase 5) | `BROKER_LIVE_TRADING_ENABLED` defaults to `false`, independent of whether real Zerodha credentials are configured | Real order placement through a connected broker is real money — the spec itself calls out that broker integration is where compliance/legal review becomes required before anything ships live; having valid API credentials shouldn't be the only gate | The mock adapter's `place_order()` always returns "rejected" too — there is no path in this codebase today that executes a real trade without a second, explicit environment flag flip |
+| Broker holdings pricing (Phase 5) | A synced broker holding's live price/P&L still comes from this app's own simulated market data, not Zerodha's real quotes | Phase 1's mock market data is the only live pricing feed that exists in this codebase — Kite Connect's own quote/streaming API isn't wired in this phase | A broker-synced position's *quantity and average price* are real (from the broker), but its *current price and P&L* are simulated — stated in the UI via the Demo Data badge, not conflated as fully real |
+| Broker holdings outside the seeded universe (Phase 5) | A real broker holding in a symbol outside this app's seeded NIFTY-subset securities is skipped during sync, reported back as `skipped_symbols`, not fabricated a price for | This app can only price/analyze the ~20 seeded securities (see §11) | A real Zerodha account holding e.g. a small-cap or ETF outside that set will show fewer synced positions than the real account has — an honest, visible limitation, not silently wrong totals |
+| Broker portfolio is read-only in-app (Phase 5) | No "Add holding" equivalent for `kind="broker"` portfolios — the only way its holdings change is a Sync | A broker portfolio's whole purpose is mirroring an external source of truth; a manually-edited row would silently drift from what the broker actually shows | Same restriction pattern as `kind="paper"` (Phase 4) applied consistently to the new kind |
 
 ## 10. Roadmap
 
@@ -351,12 +377,29 @@ order-book depth, margin/leverage, delayed/retrospective outcome tracking
 itself flags trade-volume rewards as risky) — each needs infrastructure
 this phase doesn't have or was explicitly avoided as a bad incentive.
 
-- **Phase 5 — Brokerage**: `BrokerAdapter` interface, Zerodha Kite Connect
-  integration (sandbox first), broker credential isolation. This is also the
-  point a real compliance/legal review is required before anything ships live.
-- **Phase 6 — Professional**: options workspace (unblocks Greeks/vol
-  surfaces), institutional dashboards, multi-portfolio/family-office
-  features, public APIs, billing tiers.
+**Phase 5 — Brokerage** (done, scoped — see §9): `BrokerAdapter` interface
+(`domains/broker/adapter.py`) mirroring `ModelProvider`'s pattern —
+`MockBrokerAdapter` (checked-in default, simulated connected account) and
+`ZerodhaKiteAdapter` (real Kite Connect v3 REST calls, built to spec but not
+live-tested — no real credentials available in this environment); broker
+credential/token isolation via application-layer Fernet encryption
+(`core/crypto.py`, the first encryption-at-rest in this codebase); a
+lazily-created, sync-only `Portfolio` (`kind="broker"`) that mirrors the
+connected broker's real holdings exactly (upsert + delete-stale); one new
+AI tool (`get_broker_holdings`); a `/broker` page (connect/sync/disconnect,
+read-only holdings table, AI coach handoff). Real order placement through a
+connected broker is implemented (`POST /broker/orders`) but gated behind
+`BROKER_LIVE_TRADING_ENABLED=false` by default, independent of whether real
+credentials are configured — flipping it on is the compliance/legal-review
+gate the original spec calls for, not a side effect of setup. Deliberately
+not built: non-Zerodha brokers, Kite's WebSocket live-tick/order-postback
+streams (reuses the existing polling quote pattern instead), margin/
+leverage visibility, and multi-broker-per-user support (one connection per
+broker per user, enforced by a DB-level unique index).
+
+**Phase 6 — Professional**: options workspace (unblocks Greeks/vol
+surfaces), institutional dashboards, multi-portfolio/family-office
+features, public APIs, billing tiers.
 
 ## 11. Known technical risks
 
@@ -427,4 +470,23 @@ this phase doesn't have or was explicitly avoided as a bad incentive.
   and a `MultipleResultsFound` crash during Phase 4 browser verification —
   see §9. Treat any new lazily-created, per-user singleton resource as
   needing the same pattern from the start, not as an edge case to catch
-  later.
+  later. `get_or_create_broker_portfolio()` (`domains/broker/service.py`,
+  Phase 5) applies the identical pattern from day one rather than waiting
+  to hit the same race live.
+- Phase 5's new `broker_connections` table needed no manual migration —
+  unlike Phase 4's `cash_balance`/`order_id` columns, it's a brand-new
+  table, and `create_all()` (see above) does handle those. The distinction
+  matters: a new *table* is free, a new *column on an existing table* is
+  not.
+- Live browser testing during Phase 5 surfaced real request queueing under
+  load: with an open market-data WebSocket, several React Query hooks
+  polling on page load, and (when `AI_PROVIDER=ollama`) a slow local model
+  round-trip all competing for the browser's limited concurrent-connections-
+  per-origin budget on HTTP/1.1, a UI action's request can sit queued for
+  several seconds — confirmed via CDP network tracing, not a hang or a
+  broker-specific bug (an isolated `fetch()`/`curl` call to the same
+  endpoint resolves in under 30ms). Not fixed this phase — genuinely fixing
+  it means HTTP/2 on the dev server or reducing concurrent background
+  polling, both bigger changes than Phase 5's scope. If a UI action seems
+  slow to respond during manual testing, check for concurrent AI/WebSocket
+  activity in the same browser session before assuming a new bug.
