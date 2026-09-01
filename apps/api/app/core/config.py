@@ -30,9 +30,15 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
-    # No RBAC system exists yet (see docs/ARCHITECTURE.md Phase 3 trade-offs)
-    # — this is a placeholder allowlist, not a real roles/permissions model.
+    # ADMIN_EMAILS is a dynamic bootstrap grant kept alongside the Tier 1
+    # `User.role` column (core/roles.py) for backward compatibility — see
+    # core/deps.py::require_role().
     admin_emails: str = ""
+
+    # Macro data provider (Tier 1) — mirrors AI_PROVIDER/BROKER_PROVIDER.
+    # "mock" is the only implementation that exists; see
+    # domains/macro/provider.py.
+    macro_provider: str = "mock"
 
     # Broker integration (Phase 5) — see domains/broker/. Mirrors the
     # AI_PROVIDER pattern: checked-in default is "mock" (zero external
