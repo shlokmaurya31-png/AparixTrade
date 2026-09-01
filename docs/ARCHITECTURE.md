@@ -563,3 +563,62 @@ would be speculative work (see §9).
   without checking that a stale cached chain (spot price moved since
   computed) isn't served as if current — the whole point of computing on
   request is that a chain always reflects the live simulated spot.
+
+## 12. Tier 1 infrastructure
+
+A separate, larger effort from the phased product roadmap above — see
+`docs/APARIX_TIER1_AUDIT.md` (written before this work, an honest
+per-domain status check) and `docs/APARIX_TIER1_COMPLETION_REPORT.md`
+(written after, with a production-readiness estimate). Summarized here
+because it touches core architecture every phase above depends on.
+
+- **Data provenance** (`core/provenance.py`) — a shared `Provenance` model
+  attached to real API responses (market quotes, macro indicators), with a
+  genuine staleness check (`quality: good|stale`), not a hardcoded value.
+  Narrower than the AI layer's existing provenance (every `ai_tool_calls`
+  row already traces an AI-cited number to its source) — unifying the two
+  is future work, not done here.
+- **`DataQualityService`** (`domains/admin/data_quality.py`) — real checks
+  against real (mock) data: stale live quotes, invalid/negative candle
+  prices or bad OHLC ordering, missing macro indicators. Exposed via
+  `GET /admin/data-quality`. Each check can genuinely report a problem if
+  the underlying data actually has one (see its tests) — not a set of
+  checks that always report GOOD by construction.
+- **`MacroDataProvider`** (`domains/macro/provider.py`) — the macro domain
+  migrated to the interface-+Mock pattern already proven by
+  `MarketDataProvider`/`ModelProvider`/`BrokerAdapter`, env-driven
+  (`MACRO_PROVIDER=mock`, the only value that exists). A refactor (same
+  data, same behavior), not a new data source — proves the seam generalizes
+  cleanly rather than declaring that it would.
+- **RBAC** (`core/roles.py`, `core/deps.py::require_role()`) — a stored
+  `role` column (`super_admin/admin/compliance/analyst/support/user`)
+  replacing the previously-binary admin-email-allowlist check.
+  `ADMIN_EMAILS` is deliberately preserved as an alternate admin grant
+  (`require_role` treats it as equivalent to `role="admin"`), so existing
+  admin access via the env allowlist wasn't disturbed by this landing. No
+  role-editing UI yet — backend correctness first.
+- **Instrument master** (`models/security.py`) — `Security` gained `isin`,
+  `segment`, `asset_class`, `lot_size`, `tick_size` (all nullable,
+  unpopulated for today's seeded universe) — real columns for a licensed
+  provider to write to later, not a speculative guess at its shape.
+- **Real Alembic migrations** — see `docs/DATABASE_MIGRATION.md` for the
+  full story. `app.main`'s lifespan now runs `core/migrations.py::run_migrations()`
+  instead of a bare `create_all()`; a baseline migration captures the full
+  schema; a real 26-user local dev database was migrated live (not just a
+  test fixture) to prove the adoption path works. This directly fixes the
+  `create_all()`-can't-add-columns gap that caused two real incidents in
+  Phases 4–6 (see §11).
+- Found and fixed while wiring migrations: `models/__init__.py` never
+  imported `models.broker`, so `BrokerConnection` (Phase 5) was silently
+  missing from `Base.metadata` whenever only `import app.models` ran (as
+  Alembic's `env.py` does) — the running app worked by accident, via a
+  different import path registering it first. A real, if narrow, bug —
+  not caught by any existing test, because the app itself never hit it.
+
+**Deferred** (see `docs/APARIX_TIER1_AUDIT.md` for the full MISSING list
+and why): real fundamentals/news/document domains, macro time-series and
+vintage tracking, a corporate-actions engine, an event-propagation graph,
+a financial knowledge graph, RAG/document intelligence, a historical
+analogue engine, portfolio exposure beyond sector, and the point-in-time
+no-look-ahead-bias test suite (nothing with an announcement/effective-date
+split exists yet to test against).

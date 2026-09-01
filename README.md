@@ -78,7 +78,12 @@ have more than one.
 
 To see the admin dashboard: add your account's email to `ADMIN_EMAILS` in
 `apps/api/.env`, restart the API, and log in again — an "Admin" nav item
-appears with user/audit-log/AI-usage/system-health views.
+appears with user/audit-log/AI-usage/system-health/data-quality views (the
+last one runs real checks — stale quotes, invalid candle prices, missing
+macro indicators — against the app's own data, not hardcoded findings). A
+real role-based access system now backs admin access too (see
+`docs/APARIX_TIER1_AUDIT.md`/`docs/APARIX_TIER1_COMPLETION_REPORT.md`) —
+`ADMIN_EMAILS` still works exactly as before as an alternate grant.
 
 **To use the real AI** instead of the templated mock: install
 [Ollama](https://ollama.com), `ollama pull llama3.1`, make sure `ollama
