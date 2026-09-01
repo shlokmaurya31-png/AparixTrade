@@ -11,7 +11,10 @@ from app.core.migrations import run_migrations
 from app.domains.corporate_actions.service import seed_if_needed as seed_corporate_actions_if_needed
 from app.domains.events.service import seed_if_needed as seed_events_if_needed
 from app.domains.fundamentals.service import seed_if_needed as seed_fundamentals_if_needed
-from app.domains.macro.service import seed_if_needed as seed_macro_if_needed
+from app.domains.macro.service import (
+    seed_if_needed as seed_macro_if_needed,
+    seed_vintage_if_needed as seed_macro_vintage_if_needed,
+)
 from app.domains.market_data.service import live_market_state, seed_if_needed as seed_market_if_needed
 from app.domains.market_data.websocket import router as market_ws_router, run_tick_loop
 from app.domains.news.service import run_news_ingestion_loop, seed_if_needed as seed_news_if_needed
@@ -26,6 +29,7 @@ async def lifespan(app: FastAPI):
         await seed_market_if_needed(db)
         await live_market_state.init_from_db(db)
         await seed_macro_if_needed(db)
+        await seed_macro_vintage_if_needed(db)
         await seed_events_if_needed(db)
         await seed_fundamentals_if_needed(db)
         await seed_corporate_actions_if_needed(db)

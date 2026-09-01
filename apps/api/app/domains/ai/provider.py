@@ -89,6 +89,13 @@ class MockModelProvider(ModelProvider):
             data = await use("get_events")
             text = self._events_text(data["events"], mode)
 
+        elif any(
+            k in lowered for k in ["revision", "revised", "vintage", "inflation history", "gdp history"]
+        ) and any(k in lowered for k in ["inflation", "cpi", "gdp"]):
+            code = "gdp_growth" if "gdp" in lowered else "cpi_inflation"
+            data = await use("get_macro_history", code=code)
+            text = self._macro_history_text(data, mode)
+
         elif any(k in lowered for k in ["gdp", "inflation", "cpi", "repo rate", "interest rate", "macro", "g-sec", "gsec"]):
             data = await use("get_macro_indicators")
             text = self._macro_text(data["indicators"], mode)
@@ -362,6 +369,26 @@ class MockModelProvider(ModelProvider):
         # have it silently dropped by an arbitrary cutoff.
         headline = ", ".join(f"{i['name']}: {i['value']}{i['unit']}" for i in indicators)
         return f"Current macro snapshot — {headline}. [DEMO DATA]"
+
+    @staticmethod
+    def _macro_history_text(data: dict, mode: str) -> str:
+        if not data.get("releases"):
+            return f"{data.get('note', 'No history available.')} [DEMO DATA]"
+        releases = data["releases"]
+        if mode == "quant":
+            lines = "; ".join(
+                f"{r['period']} rev{r['revision_number']}={r['value']} (released {r['release_date']})"
+                for r in releases
+            )
+            return f"{data['code']} vintage history: {lines} [DEMO DATA — synthetic, only CPI/GDP have real revisions]"
+        latest = releases[-1]
+        was_revised = any(r["period"] == latest["period"] and r["revision_number"] > 0 for r in releases)
+        revision_note = " (this figure has since been revised)" if was_revised and latest["revision_number"] == 0 else ""
+        return (
+            f"As of the date requested, the most recently known {data['code']} reading was {latest['value']} "
+            f"for the period ending {latest['period']} (published {latest['release_date']}){revision_note}. "
+            f"[DEMO DATA — synthetic vintage history]"
+        )
 
     _TICKER_RE = re.compile(r"\b[A-Z]{2,10}\b")
     _TICKER_STOPWORDS = {"I", "AI"}

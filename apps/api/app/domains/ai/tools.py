@@ -17,6 +17,7 @@ from app.domains.broker import service as broker_service
 from app.domains.corporate_actions import service as corporate_actions_service
 from app.domains.events import service as events_service
 from app.domains.fundamentals import service as fundamentals_service
+from app.domains.macro import service as macro_service
 from app.domains.macro.service import list_indicators
 from app.domains.market_data.service import get_security_by_symbol, live_market_state
 from app.domains.news import service as news_service
@@ -139,6 +140,37 @@ async def get_event_impact_tool(db: AsyncSession, portfolio: Portfolio, event_id
 async def get_macro_indicators_tool(db: AsyncSession, portfolio: Portfolio, **_: Any) -> dict:
     indicators = await list_indicators(db)
     return {"indicators": [{"code": i.code, "name": i.name, "value": i.value, "unit": i.unit} for i in indicators]}
+
+
+async def get_macro_history_tool(
+    db: AsyncSession, portfolio: Portfolio, code: str = "cpi_inflation", as_of: str | None = None, **_: Any
+) -> dict:
+    try:
+        effective_as_of = date.fromisoformat(as_of) if as_of else date.today()
+    except ValueError:
+        effective_as_of = date.today()
+    releases = await macro_service.get_releases_as_of(db, code, as_of=effective_as_of)
+    if not releases:
+        return {
+            "code": code,
+            "releases": [],
+            "note": "No vintage/revision history for this indicator — only cpi_inflation and gdp_growth "
+            "have real revision history in this build; the rest are market-quoted rates/prices, not "
+            "periodically-revised statistics.",
+        }
+    return {
+        "code": code,
+        "as_of": str(effective_as_of),
+        "releases": [
+            {
+                "period": str(r.period),
+                "value": float(r.value),
+                "revision_number": r.revision_number,
+                "release_date": str(r.release_date),
+            }
+            for r in releases
+        ],
+    }
 
 
 async def preview_trade_tool(
@@ -363,6 +395,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_events": get_events_tool,
     "get_event_impact": get_event_impact_tool,
     "get_macro_indicators": get_macro_indicators_tool,
+    "get_macro_history": get_macro_history_tool,
     "preview_trade": preview_trade_tool,
     "evaluate_order": evaluate_order_tool,
     "get_broker_holdings": get_broker_holdings_tool,

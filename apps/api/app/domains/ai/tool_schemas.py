@@ -158,6 +158,33 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "get_macro_history",
+            "description": (
+                "Get the vintage/revision history for a macro indicator that actually has real revisions "
+                "(cpi_inflation or gdp_growth only — other indicators are market-quoted rates/prices with no "
+                "revision history). Point-in-time: if as_of is given, only shows what was actually published "
+                "by that date, including which figures were later revised."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "enum": ["cpi_inflation", "gdp_growth"],
+                        "description": "Which indicator's history to fetch.",
+                    },
+                    "as_of": {
+                        "type": "string",
+                        "description": "Date (YYYY-MM-DD) to evaluate as of. Optional — defaults to today.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "preview_trade",
             "description": (
                 "Preview a hypothetical buy or sell order in the user's paper trading account WITHOUT executing "

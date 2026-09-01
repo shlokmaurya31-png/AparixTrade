@@ -9,6 +9,7 @@ from app.models.corporate_action import CorporateAction  # noqa: F401
 from app.models.event import Event  # noqa: F401
 from app.models.fundamentals import FinancialStatement  # noqa: F401
 from app.models.macro import MacroIndicator  # noqa: F401
+from app.models.macro_release import MacroIndicatorRelease  # noqa: F401
 from app.models.news import NewsArticle  # noqa: F401
 from app.models.order import Order  # noqa: F401
 from app.models.portfolio import Holding, Portfolio, Transaction  # noqa: F401
