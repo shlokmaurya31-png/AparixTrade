@@ -29,6 +29,16 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Both "session" (not the default "function") — required for a real async
+# driver against a module-level engine singleton (app/core/db.py). SQLite/
+# aiosqlite tolerates a fresh event loop per test; a real asyncpg
+# connection pool does not — reusing it across a NEW per-test event loop
+# raises "Task ... got Future ... attached to a different loop". Caught
+# only by actually running this suite against a real Postgres instance
+# (Tier 1 §5 verification), not by the SQLite-only test history every
+# prior session's own verification had. See docs/DATABASE_MIGRATION.md.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 
 [build-system]
 requires = ["hatchling"]

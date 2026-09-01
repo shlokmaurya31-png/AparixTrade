@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, String
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -29,8 +29,12 @@ class BrokerConnection(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     encrypted_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     encrypted_api_secret: Mapped[str | None] = mapped_column(String(500), nullable=True)
     encrypted_access_token: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    token_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # timezone=True on all three: always assigned datetime.now(timezone.utc)
+    # (or an adapter's own tz-aware expires_at) — a real bug caught by
+    # running against a real Postgres instance (Tier 1 §5 verification);
+    # see models/portfolio.py::Transaction.executed_at for the same fix.
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     broker_user_id: Mapped[str | None] = mapped_column(String(100), nullable=True)  # the broker's own account id
-    connected_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    last_synced_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

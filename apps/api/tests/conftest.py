@@ -8,7 +8,12 @@ from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 
 TEST_DB_PATH = Path(__file__).parent / f"test_{uuid.uuid4().hex}.db"
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
+# setdefault, not unconditional assignment: lets `DATABASE_URL=postgresql+asyncpg://...
+# uv run pytest` run this exact suite against a real Postgres instance
+# (docs/DATABASE_MIGRATION.md's own "re-run the full suite before trusting
+# it" step) without touching this file. No effect on the normal case —
+# nothing else sets DATABASE_URL before importing this module.
+os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{TEST_DB_PATH}")
 os.environ["AI_PROVIDER"] = "mock"
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-not-for-production"
 os.environ["BROKER_PROVIDER"] = "mock"

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, Numeric, String, text
+from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -82,6 +82,11 @@ class Transaction(Base, UUIDPrimaryKeyMixin):
     side: Mapped[str] = mapped_column(String(4), nullable=False)  # "buy" | "sell"
     quantity: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
     price: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
-    executed_at: Mapped[datetime] = mapped_column(nullable=False)
+    # timezone=True: always assigned datetime.now(timezone.utc) — a
+    # real bug caught by running against a real Postgres instance (Tier 1
+    # §5 verification): SQLite silently tolerates a tz-aware Python value
+    # in a tz-naive column; Postgres correctly rejects it
+    # ("can't subtract offset-naive and offset-aware datetimes").
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="transactions")
