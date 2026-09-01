@@ -1,0 +1,26 @@
+from fastapi import APIRouter
+
+from app.domains.admin.router import router as admin_router
+from app.domains.ai.router import router as ai_router
+from app.domains.auth.router import router as auth_router
+from app.domains.events.router import router as events_router
+from app.domains.macro.router import router as macro_router
+from app.domains.market_data.router import router as market_router
+from app.domains.paper_trading.router import router as paper_trading_router
+from app.domains.portfolios.router import router as portfolios_router
+from app.domains.risk.router import router as risk_router
+from app.domains.simulation.router import router as simulation_router
+from app.domains.users.router import router as users_router
+
+api_v1_router = APIRouter(prefix="/api/v1")
+api_v1_router.include_router(auth_router)
+api_v1_router.include_router(users_router)
+api_v1_router.include_router(portfolios_router)
+api_v1_router.include_router(market_router)
+api_v1_router.include_router(risk_router)
+api_v1_router.include_router(simulation_router)
+api_v1_router.include_router(events_router)
+api_v1_router.include_router(macro_router)
+api_v1_router.include_router(admin_router)
+api_v1_router.include_router(paper_trading_router)
+api_v1_router.include_router(ai_router)

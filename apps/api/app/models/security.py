@@ -1,0 +1,39 @@
+import uuid
+from datetime import date
+
+from sqlalchemy import Boolean, Date, ForeignKey, Numeric, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.db import Base
+from app.models.mixins import UUIDPrimaryKeyMixin
+
+
+class Security(Base, UUIDPrimaryKeyMixin):
+    """A tradeable instrument. Phase 1 only ever contains the seeded mock
+    NIFTY-subset universe — see domains/market_data/seed_data.py."""
+
+    __tablename__ = "securities"
+
+    symbol: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sector: Mapped[str] = mapped_column(String(100), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(10), default="NSE", nullable=False)
+    instrument_type: Mapped[str] = mapped_column(String(20), default="equity", nullable=False)
+    is_index: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_mock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class Candle(Base, UUIDPrimaryKeyMixin):
+    """Daily OHLCV. Phase 1 data is entirely synthetic (seeded random walk),
+    never presented as real historical prices — see MockMarketDataProvider."""
+
+    __tablename__ = "candles"
+
+    security_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("securities.id"), index=True, nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    open: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
+    high: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
+    low: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
+    close: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
+    volume: Mapped[int] = mapped_column(nullable=False)
+    is_mock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

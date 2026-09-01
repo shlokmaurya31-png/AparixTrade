@@ -1,0 +1,27 @@
+# Optional — Phase 1 local dev does NOT require Docker (SQLite is the default,
+# see .env.example). Use this if you have Docker and want to develop against
+# real PostgreSQL, or as the reference for production infrastructure.
+#
+# Redis is included commented-out: nothing in Phase 1 needs caching/pubsub yet
+# (see docs/ARCHITECTURE.md, "Trade-offs" table). Uncomment when Phase 2+
+# actually wires it up — don't run infra nothing depends on.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aparix
+      POSTGRES_PASSWORD: aparix
+      POSTGRES_DB: aparix
+    ports:
+      - "5432:5432"
+    volumes:
+      - aparix_postgres_data:/var/lib/postgresql/data
+
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+
+volumes:
+  aparix_postgres_data:
