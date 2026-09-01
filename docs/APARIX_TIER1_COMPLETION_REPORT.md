@@ -1,11 +1,11 @@
-# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–6)
+# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–7)
 
 Written against `docs/APARIX_TIER1_AUDIT.md` (the pre-implementation
 audit) and the Tier 1 infrastructure request's own 64 sections. Honest
 percentages, not aspirational ones — see §61's own instruction not to
-claim 100% unless something genuinely is. Updated after Session 6 (RAG
-foundation); Sessions 1–5 content below is otherwise unchanged from when
-it was first written.
+claim 100% unless something genuinely is. Updated after Session 7 (RBAC
+role-management UI + audit trail); Sessions 1–6 content below is
+otherwise unchanged from when it was first written.
 
 ## What "Session 1" means
 
@@ -229,6 +229,27 @@ fabrication, and — consistent with this session's established precedent
 for this category of finding — was documented as a known local-model
 limitation rather than chased with further prompt engineering.
 
+## Session 7: RBAC role-management UI + audit trail
+
+The natural follow-up to Session 1's backend-only RBAC landing, which
+explicitly flagged this as a real gap ("no role-editing UI or audit
+trail specifically for role changes yet"):
+
+| Item | Where | Verification |
+|---|---|---|
+| `PATCH /admin/users/{id}/role` | `domains/admin/router.py`, `domains/admin/service.py::update_user_role()` | `tests/test_role_management.py` (10 tests) — happy path, unknown role rejected (422), target user not found (404) |
+| Self-role-change blocked | `update_user_role()` | `test_cannot_change_own_role`; also reflected in the UI (the admin's own row's role `<select>` is disabled), though the server check is the real guard |
+| Only `super_admin` can touch `super_admin` | `update_user_role()` | `test_plain_admin_cannot_grant_super_admin`, `test_plain_admin_cannot_change_an_existing_super_admins_role`, `test_super_admin_can_grant_super_admin` |
+| Real audit trail for every role change | `log_action()` — `action="admin.update_user_role"`, `input_data` has `target_user_id`/`old_role`/`new_role` | `test_role_change_is_recorded_in_the_audit_log`; live-verified: the admin page's audit log table shows a real entry with a `success` result immediately after a real role change |
+| "Users" table role column (editable `<select>`) | `apps/web/app/(dashboard)/admin/page.tsx` | Live-verified via Playwright: a real admin account changed a real target user's role through the actual page, the change persisted (confirmed via a fresh page load), zero console errors |
+
+Test count (end of Session 7): **267 passing** (+10 over Session 6's 257;
+0 regressions).
+
+No new database table or migration — `User.role` (`models/user.py`) has
+existed since Session 1; this session made it real to actually edit,
+rather than only settable via a direct DB write.
+
 ## Partially implemented
 
 - **Provenance** only covers 2 of the many data shapes this app serves
@@ -241,11 +262,6 @@ limitation rather than chased with further prompt engineering.
   but nothing populates real ISIN/lot-size/tick-size values, because no
   real instrument-data provider exists yet. This is schema readiness, not
   a working feature.
-- **RBAC** — the role column and guard exist; there's no UI to assign
-  roles (deliberately, per the request's own "don't overcomplicate the UI
-  yet" instruction), so today the only way to set `compliance`/`analyst`/
-  `support`/`super_admin` is a direct DB write. `admin` still also works
-  via the email allowlist as before.
 
 ## Explicitly missing (not attempted — see the audit for why each is a real, separate effort)
 
@@ -376,10 +392,10 @@ external data source and changed no licensing posture.
 - Rate limiting, request-ID middleware, and sanitized error responses are
   still missing — flagged in the audit, not addressed this session (RBAC
   was prioritized as the higher-leverage piece).
-- RBAC has no role-editing UI or audit trail specifically for role
-  changes yet (a direct DB write to change a role isn't logged via
-  `log_action()` the way an in-app action would be) — a real gap for
-  whenever a role-management endpoint is built.
+- ~~RBAC has no role-editing UI or audit trail specifically for role
+  changes yet~~ — **done in Session 7**: `PATCH /admin/users/{id}/role`
+  is real, guarded (self-role-change blocked, only `super_admin` can
+  touch `super_admin`), and every change is logged via `log_action()`.
 - The pre-Alembic reconciliation path executes raw `ALTER TABLE` SQL
   built from a hardcoded table/column list (not user input) — not an
   injection risk, but worth noting since it's one of the only places in
@@ -422,15 +438,13 @@ external data source and changed no licensing posture.
 
 In rough dependency order, matching what actually unblocks the most:
 
-1. **RBAC role-management UI + audit trail** — the natural follow-up to
-   Session 1's backend-only RBAC landing.
-2. **Survivorship-bias / point-in-time security universe** — a real,
+1. **Survivorship-bias / point-in-time security universe** — a real,
    separate effort (delisted/renamed/merged securities entering/leaving a
    historical query), now that Session 3 has the underlying corporate
    action types defined; still needs a way to seed it that doesn't
    disrupt the live tradable universe (e.g. a dedicated set of
    "historical only" securities never offered for trading).
-3. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
+2. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
    beyond news articles, now that Session 6 has a real embedding+retrieval
    foundation to extend rather than build from scratch.
 
@@ -448,18 +462,18 @@ for:
 | Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~63%** | Point-in-time enforcement now exists for three data domains (fundamentals, corporate actions, macro vintage) plus news's real-vs-classified distinction, each with a regression test proving no future-data leak — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, and macro's point-in-time discipline covers 2 of 7 indicators (correctly — the other 5 have no revision concept to enforce) |
 | Actual financial data (market/fundamentals/macro/news/corporate actions) | **~25%** | Macro now has real revision/vintage history for the 2 indicators that genuinely have one, alongside fundamentals/corporate-actions' real point-in-time engines and news's one real external source (gated off by default). Still entirely synthetic underneath: no real market-data, fundamentals, or macro vendor integration |
 | Knowledge graph / event intelligence / RAG | **~15%** | News ingestion creates real single-target events (a narrow slice of "event intelligence"); RAG now has a real embedding+retrieval foundation over the real news corpus (Session 6) — still no entity extraction, no propagation graph, no knowledge graph, and the RAG corpus is one document domain, not the broader knowledge base the full spec describes |
-| Security (RBAC, encryption, rate limiting, audit) | **~35%** | RBAC and credential encryption are real; rate limiting, request IDs, and error sanitization are entirely absent |
+| Security (RBAC, encryption, rate limiting, audit) | **~45%** | RBAC now has a real, guarded management UI and a real per-change audit trail (Session 7), and credential encryption is real; rate limiting, request IDs, and error sanitization are still entirely absent |
 | Regulatory posture | **~50%** | The education/analytics/advisory/execution boundary is genuinely maintained in product copy and this doc set — but that discipline has never been reviewed by an actual compliance professional, which the request itself says is required before anything resembling real advice or execution ships |
 
-**Overall: six sessions in, the foundation is meaningfully stronger
-(schema-drift risk fixed, real RBAC, a real provenance/quality seam, four
-independent point-in-time query engines each proven against an actual
-leak scenario, a real external news pipeline verified against a live
-government feed, real macro revision/vintage history for the two
-indicators that genuinely have one, and — new this session — a real
-embedding/retrieval layer with a genuinely functional `researcher` AI
-mode) without adding a single line of fake functionality. A real
-plausibility bug (P/E ~1667) was caught and fixed during live
+**Overall: seven sessions in, the foundation is meaningfully stronger
+(schema-drift risk fixed, real RBAC with a real management UI and audit
+trail, a real provenance/quality seam, four independent point-in-time
+query engines each proven against an actual leak scenario, a real
+external news pipeline verified against a live government feed, real
+macro revision/vintage history for the two indicators that genuinely have
+one, and a real embedding/retrieval layer with a genuinely functional
+`researcher` AI mode) without adding a single line of fake functionality.
+A real plausibility bug (P/E ~1667) was caught and fixed during live
 verification in Session 2; a real duplicate-event bug was caught and
 fixed in Session 4; Session 5 caught the same "seed only runs once"
 gotcha a third time and, separately, a test that was asserting something
@@ -467,7 +481,11 @@ unrealistic rather than something wrong; Session 6 caught a real
 tool-argument crash and, more importantly, a real gap in the
 hallucination guardrail itself (a failed tool call wasn't being treated
 as ungrounded) — caught by actually watching the local model fabricate
-citations live, not by inspection, and fixed the same day. But "Aparix,
+citations live, not by inspection, and fixed the same day; Session 7's
+own live verification surfaced an apparent hydration-error console
+message that turned out to be a direct-URL-navigation artifact, not a
+real regression — confirmed rather than assumed, by re-running the exact
+same flow through normal in-app navigation. But "Aparix,
 the financial intelligence operating system for India" is still,
 honestly, mostly ahead of this codebase, not behind it — the knowledge
 graph is still essentially unstarted, and RAG covers exactly one document

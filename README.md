@@ -18,7 +18,8 @@ Carlo, custom stress testing, buy-and-hold backtesting), an event
 intelligence engine (mock news events mapped to sectors/companies with a
 quantified portfolio-impact estimate — the "flood disrupts Reliance's
 Jamnagar operations" scenario, working end to end), a mock macro data
-feed, a read-only admin dashboard (now with real RBAC and a data-quality
+feed, an admin dashboard (real RBAC with an actual role-management UI and
+per-change audit trail, not just a backend column, plus a data-quality
 view), a paper trading simulator (virtual ₹10L capital, realistic
 slippage/brokerage, cash-constrained buy/sell — no real money, no real
 broker), a broker connection layer (`BrokerAdapter` interface — a

@@ -383,6 +383,8 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Embedding provider default (Tier 1 S6) | `EMBEDDING_PROVIDER=hashing` (feature-hashing bag-of-words, zero external dependency) checked in; `=ollama` (real dense embeddings via a locally running `nomic-embed-text`) opt-in | Same "mock/zero-dependency default, real opt-in upgrade" pattern as every other provider in this codebase; unlike most "mock" defaults, hashing is a real algorithm over real ingested text, not fabricated/random — see `domains/rag/embeddings.py` | Weaker than a dense embedding at synonyms/paraphrases (exact shared vocabulary drives the score) — documented directly in the `researcher` mode's system-prompt instruction, not silently assumed to be equivalent |
 | No ANN vector index (Tier 1 S6) | Full-scan cosine similarity over all indexed documents (`domains/rag/analytics.py`), no FAISS/pgvector/etc | Genuinely correct at the current corpus size (tens of rows) — an ANN index would be complexity with no benefit yet, same reasoning as `check_candle_integrity()`'s documented full-table-scan limitation | Explicitly flagged in `domains/rag/analytics.py`'s docstring as real future work before a much larger corpus makes a full scan slow, not silently left unscoped |
 | Guardrail widened to cover failed tool calls (Tier 1 S6) | `_apply_guardrail()` (`domains/ai/ollama_provider.py`) now treats an attempted-and-failed tool call the same as no tool call at all, not just "any tool call was attempted" | Caught live during this session's own verification: a malformed `top_k` argument crashed `search_knowledge_base` twice, and llama3.1 answered anyway with three entirely invented publisher names/titles/scores — the old guardrail didn't flag it because *a* tool call existed, even though none succeeded | `tests/test_ollama_provider.py::test_guardrail_flags_a_response_built_on_only_failed_tool_calls` is a regression test for this exact scenario, not a hypothetical one |
+| Self-role-change blocked entirely (Tier 1 S7) | `PATCH /admin/users/{id}/role` rejects a target `user_id` equal to the caller's own, for every role, not just a downgrade | A compromised or careless admin session changing its own role (accidental self-lockout, or a compromised token self-escalating) is a real risk a second admin's involvement removes | `tests/test_role_management.py::test_cannot_change_own_role`; the frontend also disables the control on the admin's own row, though the server check is the actual guard |
+| Only super_admin can touch super_admin (Tier 1 S7) | A plain `admin` can grant/revoke any role except `super_admin`, and cannot change an existing `super_admin`'s role at all | Letting a lower-privileged admin mint or strip the platform's highest privilege would defeat having tiers at all | `tests/test_role_management.py::test_plain_admin_cannot_grant_super_admin`, `test_plain_admin_cannot_change_an_existing_super_admins_role` |
 
 ## 10. Roadmap
 
@@ -633,8 +635,9 @@ because it touches core architecture every phase above depends on.
   replacing the previously-binary admin-email-allowlist check.
   `ADMIN_EMAILS` is deliberately preserved as an alternate admin grant
   (`require_role` treats it as equivalent to `role="admin"`), so existing
-  admin access via the env allowlist wasn't disturbed by this landing. No
-  role-editing UI yet — backend correctness first.
+  admin access via the env allowlist wasn't disturbed by this landing. A
+  real role-editing UI + audit trail followed in Tier 1 Session 7, once
+  backend correctness was established first — see §12.
 - **Instrument master** (`models/security.py`) — `Security` gained `isin`,
   `segment`, `asset_class`, `lot_size`, `tick_size` (all nullable,
   unpopulated for today's seeded universe) — real columns for a licensed
@@ -832,6 +835,36 @@ renders any tool's real result, `search_knowledge_base` included, and
 `/ai/config`'s `supported_modes` list already drives which mode buttons
 are enabled, so `researcher` became a genuinely clickable, functional
 mode with zero frontend code changes.
+
+**Session 7 — RBAC role-management UI + audit trail** (done): the natural
+follow-up to Session 1's backend-only RBAC landing, which explicitly
+flagged "no role-editing UI or audit trail specifically for role changes
+yet" as a real gap. `PATCH /admin/users/{id}/role`
+(`domains/admin/service.py::update_user_role()`) is real, not a stub —
+every change is written through the existing `log_action()` audit
+mechanism (`action="admin.update_user_role"`, `input_data` carries
+`target_user_id`/`old_role`/`new_role`), verified live: the admin page's
+audit log table shows a real `admin.update_user_role` row with a
+`success` result immediately after a real role change. Two privilege-
+escalation guards exist beyond "is an admin," both enforced server-side
+and reflected in the UI (a disabled `<select>`, not just a hidden one —
+the guard is the source of truth, the UI just avoids inviting a 403):
+self-role-change is blocked entirely (a compromised or careless admin
+session can't change its own role — a second admin must), and only a
+`super_admin` may grant the `super_admin` role or change an existing
+`super_admin`'s role (a plain `admin` can't mint or strip the platform's
+highest privilege). `UpdateUserRoleRequest`'s pydantic `field_validator`
+rejects an unknown role string with a 422 before the service layer is
+ever reached. No new database table or migration — `User.role` has
+existed since Session 1; this session made it real to actually edit.
+Live-verified end to end: a real admin account changed a real target
+user's role through the actual `/admin` page UI, the change persisted,
+and the audit log entry appeared — zero console errors (one apparent
+hydration-mismatch console error on first attempt turned out to be an
+artifact of navigating directly via URL rather than in-app link
+navigation — a Next.js SSR/CSR difference unrelated to this session's
+code, confirmed by re-running the identical flow through a normal
+in-app click with zero errors).
 
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
 `docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): a
