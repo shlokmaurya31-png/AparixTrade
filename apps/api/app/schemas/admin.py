@@ -1,17 +1,37 @@
 import datetime
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.core.roles import ALL_ROLES
 
 
 class AdminUserOut(BaseModel):
     id: uuid.UUID
     email: str
     full_name: str
+    role: str
     created_at: datetime.datetime
     experience_level: str
     complexity_level: int
     portfolio_count: int
+
+
+class UpdateUserRoleRequest(BaseModel):
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def role_must_be_known(cls, value: str) -> str:
+        if value not in ALL_ROLES:
+            raise ValueError(f"Unknown role {value!r}. Known roles: {', '.join(ALL_ROLES)}")
+        return value
+
+
+class UserRoleOut(BaseModel):
+    id: uuid.UUID
+    email: str
+    role: str
 
 
 class AdminAuditLogOut(BaseModel):

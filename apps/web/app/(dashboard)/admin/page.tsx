@@ -1,12 +1,22 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AparixBadge } from "@/components/aparix/AparixBadge";
 import { AparixCard } from "@/components/aparix/AparixCard";
 import { AparixMetric } from "@/components/aparix/AparixMetric";
 import { AparixTable } from "@/components/aparix/AparixTable";
-import { api, ApiError, type AdminAuditLog, type AdminUser, type DataQualityFinding } from "@/lib/api";
+import {
+  ALL_ROLES,
+  api,
+  ApiError,
+  type AdminAuditLog,
+  type AdminUser,
+  type DataQualityFinding,
+  type UserRole,
+} from "@/lib/api";
 import { useCurrentUser } from "@/lib/use-auth";
 
 const STATUS_TONE: Record<DataQualityFinding["status"], "positive" | "warning" | "negative" | "neutral"> = {
@@ -19,9 +29,20 @@ const STATUS_TONE: Record<DataQualityFinding["status"], "positive" | "warning" |
 
 export default function AdminPage() {
   const { data: user, isLoading: userLoading } = useCurrentUser();
+  const queryClient = useQueryClient();
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const enabled = Boolean(user?.is_admin);
   const users = useQuery({ queryKey: ["admin-users"], queryFn: api.admin.users, enabled, retry: false });
+  const updateRole = useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: UserRole }) => api.admin.updateUserRole(userId, role),
+    onSuccess: () => {
+      setRoleError(null);
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-audit-logs"] });
+    },
+    onError: (err) => setRoleError(err instanceof ApiError ? err.message : "Couldn't update role."),
+  });
   const auditLogs = useQuery({ queryKey: ["admin-audit-logs"], queryFn: api.admin.auditLogs, enabled, retry: false });
   const aiUsage = useQuery({ queryKey: ["admin-ai-usage"], queryFn: api.admin.aiUsage, enabled, retry: false });
   const health = useQuery({ queryKey: ["admin-system-health"], queryFn: api.admin.systemHealth, enabled, retry: false });
@@ -122,10 +143,41 @@ export default function AdminPage() {
       </AparixCard>
 
       <AparixCard title="Users">
+        {roleError && <p className="mb-2 text-sm text-negative">{roleError}</p>}
         <AparixTable<AdminUser>
           columns={[
             { header: "Email", render: (u) => u.email },
             { header: "Name", render: (u) => u.full_name },
+            {
+              header: "Role",
+              render: (u) => {
+                const isSelf = u.id === user?.id;
+                // Only a super_admin may grant/revoke super_admin, or touch
+                // an existing super_admin's role — matches the server-side
+                // guard exactly (domains/admin/service.py::update_user_role),
+                // disabled here too so the control doesn't invite a 403.
+                const touchesSuperAdmin = u.role === "super_admin";
+                const disabled =
+                  isSelf || updateRole.isPending || (touchesSuperAdmin && user?.role !== "super_admin");
+                return (
+                  <select
+                    value={u.role}
+                    disabled={disabled}
+                    title={isSelf ? "Ask another admin to change your own role" : undefined}
+                    onChange={(e) => updateRole.mutate({ userId: u.id, role: e.target.value as UserRole })}
+                    className="rounded border border-border bg-surface px-1.5 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {ALL_ROLES.filter((r) => r !== "super_admin" || user?.role === "super_admin" || u.role === r).map(
+                      (r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      )
+                    )}
+                  </select>
+                );
+              },
+            },
             { header: "Experience", render: (u) => u.experience_level },
             { header: "Complexity", align: "right", render: (u) => u.complexity_level },
             { header: "Portfolios", align: "right", render: (u) => u.portfolio_count },

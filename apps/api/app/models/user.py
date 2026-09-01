@@ -15,10 +15,11 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # RBAC (Tier 1) — see core/roles.py. Not user-editable via any API this
-    # session (§43: build the backend correctly, don't overcomplicate the
-    # UI yet); ADMIN_EMAILS keeps working as a dynamic admin grant
-    # independent of this column, so existing admin access isn't disturbed.
+    # RBAC (Tier 1). Editable via PATCH /admin/users/{id}/role (Tier 1
+    # Session 7 — see core/roles.py and domains/admin/service.py::update_user_role()
+    # for the privilege-escalation guards); ADMIN_EMAILS keeps working as a
+    # dynamic admin grant independent of this column, so existing admin
+    # access isn't disturbed by anything done to this one.
     role: Mapped[str] = mapped_column(String(20), default=DEFAULT_ROLE, nullable=False)
 
     preferences: Mapped["UserPreferences"] = relationship(

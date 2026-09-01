@@ -64,6 +64,7 @@ export interface User {
   full_name: string;
   preferences: UserPreferences;
   is_admin: boolean;
+  role: UserRole;
 }
 
 export interface Portfolio {
@@ -276,10 +277,15 @@ export interface EventImpact {
   is_mock: boolean;
 }
 
+export type UserRole = "super_admin" | "admin" | "compliance" | "analyst" | "support" | "user";
+
+export const ALL_ROLES: UserRole[] = ["super_admin", "admin", "compliance", "analyst", "support", "user"];
+
 export interface AdminUser {
   id: string;
   email: string;
   full_name: string;
+  role: UserRole;
   created_at: string;
   experience_level: string;
   complexity_level: number;
@@ -591,6 +597,11 @@ export const api = {
     aiUsage: () => request<AdminAiUsage>("/api/v1/admin/ai-usage"),
     systemHealth: () => request<AdminSystemHealth>("/api/v1/admin/system-health"),
     dataQuality: () => request<DataQualityFinding[]>("/api/v1/admin/data-quality"),
+    updateUserRole: (userId: string, role: UserRole) =>
+      request<{ id: string; email: string; role: UserRole }>(`/api/v1/admin/users/${userId}/role`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      }),
   },
   paperTrading: {
     portfolio: () => request<PaperPortfolio>("/api/v1/paper/portfolio"),
