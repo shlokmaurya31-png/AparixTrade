@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.broker import service as broker_service
 from app.domains.events import service as events_service
+from app.domains.fundamentals import service as fundamentals_service
 from app.domains.macro.service import list_indicators
 from app.domains.market_data.service import get_security_by_symbol, live_market_state
 from app.domains.options import service as options_service
@@ -244,6 +245,59 @@ async def price_option_tool(
         return {"error": f"unknown symbol: {exc}"}
 
 
+async def get_fundamentals_tool(
+    db: AsyncSession,
+    portfolio: Portfolio,
+    symbol: str = "RELIANCE",
+    period_type: str = "annual",
+    as_of: str | None = None,
+    **_: Any,
+) -> dict:
+    try:
+        effective_as_of = date.fromisoformat(as_of) if as_of else date.today()
+    except ValueError:
+        effective_as_of = date.today()
+    try:
+        security = await fundamentals_service.resolve_security(db, symbol)
+    except fundamentals_service.UnknownSymbolError as exc:
+        return {"error": f"unknown symbol: {exc}"}
+
+    statement = await fundamentals_service.get_latest_statement_as_of(
+        db, security.id, as_of=effective_as_of, period_type=period_type
+    )
+    if statement is None:
+        return {"error": f"no fundamentals available for {symbol} as of {effective_as_of}"}
+
+    ratios = await fundamentals_service.compute_ratios(db, security, statement, as_of=effective_as_of)
+    statement_dict = fundamentals_service.statement_to_dict(security, statement)
+    # Trim to the fields a model actually needs to answer typical
+    # fundamentals questions — same "sensible default, don't over-hand"
+    # pattern as get_options_chain_tool truncating to near-the-money strikes.
+    return {
+        "symbol": statement_dict["symbol"],
+        "period_end": str(statement_dict["period_end"]),
+        "fiscal_year": statement_dict["fiscal_year"],
+        "revenue": statement_dict["revenue"],
+        "pat": statement_dict["pat"],
+        "eps": statement_dict["eps"],
+        "total_equity": statement_dict["total_equity"],
+        "total_debt": statement_dict["total_debt"],
+        "free_cash_flow": statement_dict["free_cash_flow"],
+        "ratios": {
+            "roe_pct": ratios["roe_pct"],
+            "roce_pct": ratios["roce_pct"],
+            "debt_to_equity": ratios["debt_to_equity"],
+            "current_ratio": ratios["current_ratio"],
+            "pe_ratio": ratios["pe_ratio"],
+            "pb_ratio": ratios["pb_ratio"],
+            "ev_to_ebitda": ratios["ev_to_ebitda"],
+            "fcf_yield_pct": ratios["fcf_yield_pct"],
+        },
+        "assumptions": ratios["assumptions"],
+        "is_mock": True,
+    }
+
+
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_portfolio": get_portfolio_tool,
     "get_holdings": get_holdings_tool,
@@ -261,6 +315,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_broker_holdings": get_broker_holdings_tool,
     "get_options_chain": get_options_chain_tool,
     "price_option": price_option_tool,
+    "get_fundamentals": get_fundamentals_tool,
 }
 
 

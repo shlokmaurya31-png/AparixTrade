@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.core.db import AsyncSessionLocal
 from app.core.migrations import run_migrations
 from app.domains.events.service import seed_if_needed as seed_events_if_needed
+from app.domains.fundamentals.service import seed_if_needed as seed_fundamentals_if_needed
 from app.domains.macro.service import seed_if_needed as seed_macro_if_needed
 from app.domains.market_data.service import live_market_state, seed_if_needed as seed_market_if_needed
 from app.domains.market_data.websocket import router as market_ws_router, run_tick_loop
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
         await live_market_state.init_from_db(db)
         await seed_macro_if_needed(db)
         await seed_events_if_needed(db)
+        await seed_fundamentals_if_needed(db)
 
     tick_task = asyncio.create_task(run_tick_loop())
     try:

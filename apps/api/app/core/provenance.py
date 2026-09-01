@@ -49,6 +49,22 @@ def quote_provenance(*, provider_name: str, as_of: datetime) -> Provenance:
     )
 
 
+def statement_provenance(*, provider_name: str, announcement_date, effective_date) -> Provenance:
+    # announcement_date/effective_date are `date` (not `datetime`) on
+    # FinancialStatement — a filing has no meaningful time-of-day, only a
+    # date. Combined with midnight UTC so they fit Provenance's shared
+    # datetime fields rather than adding a third, date-only variant.
+    to_dt = lambda d: datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc)  # noqa: E731
+    return Provenance(
+        source="aparix-mock-fundamentals",
+        provider=provider_name,
+        retrieved_at=datetime.now(timezone.utc),
+        source_timestamp=to_dt(announcement_date),
+        effective_timestamp=to_dt(effective_date),
+        quality="good",
+    )
+
+
 def macro_provenance(*, provider_name: str, updated_at: datetime | None) -> Provenance:
     now = datetime.now(timezone.utc)
     quality: Quality = "good" if updated_at is not None else "unknown"

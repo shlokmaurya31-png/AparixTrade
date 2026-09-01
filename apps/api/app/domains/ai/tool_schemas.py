@@ -244,6 +244,30 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fundamentals",
+            "description": (
+                "Get a company's latest available financial statement (revenue, PAT, EPS, equity, debt, free "
+                "cash flow) and computed ratios (ROE, ROCE, debt/equity, current ratio, P/E, P/B, EV/EBITDA, "
+                "FCF yield). Point-in-time: if as_of is given, returns only the statement actually announced "
+                "by that date, never a later one — never uses information from the future."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Company symbol, e.g. RELIANCE, TCS."},
+                    "period_type": {"type": "string", "enum": ["annual", "quarterly"]},
+                    "as_of": {
+                        "type": "string",
+                        "description": "Date (YYYY-MM-DD) to evaluate as of. Optional — defaults to today.",
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
 ]
 
 _SCHEMA_NAMES = {schema["function"]["name"] for schema in TOOL_SCHEMAS}

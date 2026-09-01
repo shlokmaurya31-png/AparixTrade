@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # domains/macro/provider.py.
     macro_provider: str = "mock"
 
+    # Fundamentals data provider (Tier 1 Session 2) — same pattern; see
+    # domains/fundamentals/provider.py.
+    fundamentals_provider: str = "mock"
+
     # Broker integration (Phase 5) — see domains/broker/. Mirrors the
     # AI_PROVIDER pattern: checked-in default is "mock" (zero external
     # deps), "zerodha" activates the real Kite Connect adapter once

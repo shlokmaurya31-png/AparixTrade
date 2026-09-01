@@ -110,6 +110,17 @@ class MockModelProvider(ModelProvider):
         elif any(
             k in lowered
             for k in [
+                "fundamentals", "roe", "roce", "p/e", "pe ratio", "balance sheet", "income statement",
+                "cash flow", "revenue", "earnings", "eps", "debt to equity", "debt/equity",
+            ]
+        ):
+            symbol = self._guess_symbol(message) or "RELIANCE"
+            data = await use("get_fundamentals", symbol=symbol)
+            text = self._fundamentals_text(data, mode)
+
+        elif any(
+            k in lowered
+            for k in [
                 "options chain", "option chain", "greeks", "implied volatility", "delta", "gamma", "theta",
                 "vega", "call option", "put option", "strike price",
             ]
@@ -398,6 +409,27 @@ class MockModelProvider(ModelProvider):
         return (
             f"Your {data['broker']} account{mock_note} holds {len(data['holdings'])} positions worth about "
             f"{data['total_value']:.0f} INR. [DEMO DATA]"
+        )
+
+    @staticmethod
+    def _fundamentals_text(data: dict, mode: str) -> str:
+        if "error" in data:
+            return f"Couldn't get fundamentals: {data['error']} [DEMO DATA]"
+        r = data["ratios"]
+        if mode == "quant":
+            return (
+                f"{data['symbol']} FY{data['fiscal_year']} (period ended {data['period_end']}): revenue "
+                f"{data['revenue']:.0f}, PAT {data['pat']:.0f}, EPS {data['eps']:.2f}. ROE "
+                f"{r['roe_pct']:.2f}% , ROCE {r['roce_pct']:.2f}%, D/E {r['debt_to_equity']:.2f}, current ratio "
+                f"{r['current_ratio']:.2f}, P/E {r['pe_ratio']:.2f}, P/B {r['pb_ratio']:.2f}, EV/EBITDA "
+                f"{r['ev_to_ebitda']:.2f}, FCF yield {r['fcf_yield_pct']:.2f}%. {data['assumptions']} "
+                f"[DEMO DATA — synthetic fundamentals]"
+            )
+        return (
+            f"{data['symbol']}'s most recently available results (FY{data['fiscal_year']}, ended "
+            f"{data['period_end']}) show revenue of {data['revenue']:.0f} and profit after tax of "
+            f"{data['pat']:.0f}, with an ROE of {r['roe_pct']:.1f}% and a P/E of {r['pe_ratio']:.1f}. "
+            f"[DEMO DATA — synthetic fundamentals, not a real company's actual financials]"
         )
 
     @staticmethod

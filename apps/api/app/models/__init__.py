@@ -6,6 +6,7 @@ from app.models.audit import AuditLog  # noqa: F401
 from app.models.backtest import Backtest  # noqa: F401
 from app.models.broker import BrokerConnection  # noqa: F401
 from app.models.event import Event  # noqa: F401
+from app.models.fundamentals import FinancialStatement  # noqa: F401
 from app.models.macro import MacroIndicator  # noqa: F401
 from app.models.order import Order  # noqa: F401
 from app.models.portfolio import Holding, Portfolio, Transaction  # noqa: F401
