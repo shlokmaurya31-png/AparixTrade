@@ -77,10 +77,10 @@ simulate linking a brokerage account, then "Sync holdings" to pull its
 holdings into a read-only portfolio), `/options` (pick a symbol and expiry
 to see a synthetic chain with real Black-Scholes premiums/Greeks and an IV
 smile chart — analysis only, no options trading), `/fundamentals` (pick a
-symbol to see synthetic income-statement/balance-sheet/cash-flow data and
-computed ratios — annual or quarterly, point-in-time by design: a query
-"as of" a past date only ever sees what would actually have been announced
-by then), and the AI Terminal at
+symbol to see synthetic income-statement/balance-sheet/cash-flow data,
+computed ratios, and a corporate actions history — annual or quarterly,
+point-in-time by design: a query "as of" a past date only ever sees what
+would actually have been announced by then), and the AI Terminal at
 `/ai` — try "what's happening in the market", "how does this event affect
 my portfolio", "should I buy RELIANCE", "what's in my broker account",
 "what's the delta on a TCS call option" (switch to the Options Specialist
@@ -121,7 +121,7 @@ before relying on it. Live order placement stays off
 ## Test
 
 ```bash
-cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + admin + paper trading + broker + options + fundamentals + point-in-time + AI-provider fixtures/flows
+cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + admin + paper trading + broker + options + fundamentals + corporate actions + point-in-time + AI-provider fixtures/flows
 npm run build -w web                # production build + strict TS check
 npm run lint -w web
 ```

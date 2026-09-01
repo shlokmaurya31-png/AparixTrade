@@ -1,11 +1,11 @@
-# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–2)
+# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–3)
 
 Written against `docs/APARIX_TIER1_AUDIT.md` (the pre-implementation
 audit) and the Tier 1 infrastructure request's own 64 sections. Honest
 percentages, not aspirational ones — see §61's own instruction not to
-claim 100% unless something genuinely is. Updated after Session 2
-(fundamentals + point-in-time integrity); Session 1 content below is
-otherwise unchanged from when it was first written.
+claim 100% unless something genuinely is. Updated after Session 3
+(corporate actions engine); Sessions 1–2 content below is otherwise
+unchanged from when it was first written.
 
 ## What "Session 1" means
 
@@ -80,6 +80,24 @@ and the ROE-continuity check implied by the analytics fixture), and the
 real local dev database was re-seeded and re-verified live after each fix
 — not just asserted correct in isolation.
 
+## Session 3: Corporate actions engine
+
+The item Sessions 1 and 2 both ranked #1 in "Next recommended features."
+Implemented in full, deliberately scoped to avoid touching the live
+seeded candle history (see Architecture decisions below):
+
+| Item | Where | Verification |
+|---|---|---|
+| `CorporateActionsProvider` + `MockCorporateActionsProvider` | `domains/corporate_actions/provider.py` | Deterministic per (symbol, price, date); `tests/test_corporate_actions.py` — confirms it never generates a disruptive type (merger/demerger/symbol_change/isin_change/delisting) against the live universe |
+| `adjust_price_series()` — the real adjustment algorithm | `domains/corporate_actions/analytics.py` | `tests/test_corporate_actions_analytics.py` (8 tests) — a hand-constructed raw series with an actual ₹200→₹101 split discontinuity adjusts to a smooth ₹100-scale series; volume inversely scaled; multiple compounding actions handled correctly |
+| Point-in-time query enforcement | `domains/corporate_actions/service.py::list_actions_as_of()` | Same `effective_date <= as_of` pattern as fundamentals; a dedicated test mirrors `test_point_in_time_integrity.py`'s leak-scenario check for this second domain |
+| `corporate_actions` table + migration | `models/corporate_action.py`, `alembic/versions/2114dad946db_...` | Generated against an empty DB, applied live to the real local dev DB (43 rows seeded, 28 users unaffected) |
+| AI tool `get_corporate_actions` (#18) | `domains/ai/tools.py`, both providers | `test_ai_chat_corporate_actions_intent`; live-verified via Ollama — the tool was correctly called (see Known limitations for an observed model quirk with the `as_of` argument) |
+| "Corporate Actions" card on `/fundamentals` | `apps/web/app/(dashboard)/fundamentals/page.tsx` | Live-verified: real dividend and bonus-issue records with dates rendered for TCS, zero console errors |
+
+Test count (end of Session 3): **193 passing** (+19 from Session 3's own
+work over Session 2's 174; 0 regressions).
+
 ## Partially implemented
 
 - **Provenance** only covers 2 of the many data shapes this app serves
@@ -107,11 +125,17 @@ real local dev database was re-seeded and re-verified live after each fix
   `MacroDataProvider` wraps the existing single-current-value model
   as-is; a real vintage table is its own project. Fundamentals now has
   point-in-time enforcement, macro still doesn't.
-- Corporate actions engine (splits/bonuses/dividends/mergers) and the
-  adjusted-price utilities that depend on it — also means Session 2's
-  per-share fundamentals metrics don't account for historical splits/
-  bonuses affecting share counts.
-- Survivorship-bias protection / point-in-time security universe.
+- ~~Corporate actions engine~~ — **done in Session 3**, see above. The
+  adjustment *algorithm* is real and tested; it is deliberately **not**
+  applied to the live seeded candle history (see Architecture decisions) —
+  Session 2's per-share fundamentals metrics still don't account for
+  historical splits/bonuses affecting share counts, since that would
+  require applying the adjustment to data currently treated as
+  already-adjusted.
+- Survivorship-bias protection / point-in-time security universe — the
+  disruptive action types (merger/demerger/symbol_change/isin_change/
+  delisting) that would drive this exist as schema + tested logic
+  (Session 3) but aren't seeded against any currently-tradable security.
 - Real news ingestion pipeline (fetch/normalize/dedupe/classify/extract).
 - Event propagation beyond one target (no location → industry → company →
   supply-chain → commodity → macro chain).
@@ -175,6 +199,18 @@ real local dev database was re-seeded and re-verified live after each fix
   hardcoded list of the exact columns this session's own migration added),
   not a generic schema-diffing engine — see `core/migrations.py`'s
   docstring for why that scope is correct rather than a shortcut.
+- **The corporate-action adjustment algorithm was built without applying
+  it to the live seeded candle history** (Session 3). `Candle.close` is
+  treated as already-adjusted, matching how most real market-data feeds
+  present "Close" by default; retroactively rewriting a currently-tradable
+  mock security's price history risked silently corrupting every existing
+  portfolio/risk/backtest computation for a demo-only benefit. The
+  algorithm is proven correct against a synthetic fixture instead — a
+  deliberate scope boundary, not a shortcut around building it.
+- **Disruptive corporate action types were never seeded against the live
+  universe** (Session 3) for the same reason — a `delisting` action against
+  a security someone's mock portfolio already holds would break existing
+  flows. They're supported and tested as types, just not exercised live.
 
 ## Data sources (see `docs/DATA_LICENSING.md` for the full table)
 
@@ -208,26 +244,37 @@ external data source and changed no licensing posture.
   but never actually run against a real Postgres instance in this
   environment — SQLite-only verification, same limitation the codebase
   already carried before this session.
+- Observed live during Session 3 verification: asked about TCS dividends
+  with no other context, `llama3.1` called `get_corporate_actions` with a
+  fabricated `as_of` date instead of omitting the optional parameter,
+  correctly (and honestly) reporting "no data found" for that date rather
+  than inventing a figure — the no-fabrication guarantee held, but the
+  reasoning about which date to query was wrong. A minor instance of
+  already-documented local-model tool-argument unreliability (see
+  `docs/ARCHITECTURE.md` §11); not chased with more prompt engineering
+  since the structural guardrail is what actually matters here.
 
 ## Next recommended features
 
 In rough dependency order, matching what actually unblocks the most:
 
-1. **Corporate actions engine** — needed before any real historical price
-   series can be trusted for backtesting/risk math beyond mock data, and
-   before Session 2's per-share fundamentals metrics can account for
-   splits/bonuses.
-2. **News ingestion (dev/RSS-tier source) → real event extraction** — the
+1. **News ingestion (dev/RSS-tier source) → real event extraction** — the
    event engine's single biggest limitation today is that events are
    hand-seeded, not derived from anything.
-3. **Macro time-series/vintage tracking** — extends the same point-in-time
-   discipline Session 2 gave fundamentals to the macro domain, which still
-   only has a single current value per indicator.
-4. **RAG foundation** — now genuinely unblocked (a real LLM exists since
+2. **Macro time-series/vintage tracking** — extends the same point-in-time
+   discipline fundamentals and corporate actions already have to the macro
+   domain, which still only has a single current value per indicator.
+3. **RAG foundation** — now genuinely unblocked (a real LLM exists since
    Phase 3.5) but still needs an actual document corpus decision before
    the pipeline is worth building.
-5. **RBAC role-management UI + audit trail** — the natural follow-up to
+4. **RBAC role-management UI + audit trail** — the natural follow-up to
    Session 1's backend-only RBAC landing.
+5. **Survivorship-bias / point-in-time security universe** — a real,
+   separate effort (delisted/renamed/merged securities entering/leaving a
+   historical query), now that Session 3 has the underlying corporate
+   action types defined; still needs a way to seed it that doesn't
+   disrupt the live tradable universe (e.g. a dedicated set of
+   "historical only" securities never offered for trading).
 
 ## Production readiness score
 
@@ -239,19 +286,21 @@ for:
 
 | Area | Readiness | Why |
 |---|---|---|
-| Core architecture (domain structure, provider pattern, testing discipline) | **~78%** | Genuinely solid and now includes real migrations + RBAC + a second real point-in-time query engine; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction |
-| Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~50%** | Real point-in-time enforcement now exists for fundamentals (with a real regression test proving it isn't leaking future data) — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, point-in-time discipline doesn't extend to macro yet |
-| Actual financial data (market/fundamentals/macro/news/corporate actions) | **~10%** | Fundamentals now has a real (if synthetic) engine with correct point-in-time semantics — a genuine capability, not just more mock data — but it's still synthetic data with no real vendor behind it, and macro/news/corporate-actions are unchanged |
+| Core architecture (domain structure, provider pattern, testing discipline) | **~80%** | Genuinely solid and now includes real migrations + RBAC + two independent real point-in-time query engines; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction |
+| Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~55%** | Point-in-time enforcement now exists for two domains (fundamentals, corporate actions), both with a real regression test proving they aren't leaking future data — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, point-in-time discipline doesn't extend to macro yet |
+| Actual financial data (market/fundamentals/macro/news/corporate actions) | **~15%** | Fundamentals and corporate actions both have real engines with correct point-in-time semantics and a genuine (if unapplied-to-live-data) price-adjustment algorithm — real capabilities, not just more mock data — but it's all still synthetic with no real vendor behind it, and macro/news are unchanged |
 | Knowledge graph / event intelligence / RAG | **0%** | Not started beyond the narrow one-target event-impact calculation that already existed pre-Tier-1 |
 | Security (RBAC, encryption, rate limiting, audit) | **~35%** | RBAC and credential encryption are real; rate limiting, request IDs, and error sanitization are entirely absent |
 | Regulatory posture | **~50%** | The education/analytics/advisory/execution boundary is genuinely maintained in product copy and this doc set — but that discipline has never been reviewed by an actual compliance professional, which the request itself says is required before anything resembling real advice or execution ships |
 
-**Overall: two sessions in, the foundation is meaningfully stronger
+**Overall: three sessions in, the foundation is meaningfully stronger
 (schema-drift risk fixed, real RBAC, a real provenance/quality seam, and
-now a real point-in-time query engine proven against an actual leak
-scenario) without adding a single line of fake functionality — a real
-plausibility bug (P/E ~1667) was caught and fixed during live
-verification rather than shipped. But "Aparix, the financial intelligence
-operating system for India" is still, honestly, mostly ahead of this
-codebase, not behind it — the knowledge graph, RAG, news ingestion, and
-corporate actions are all still at 0%.**
+now two independent point-in-time query engines each proven against an
+actual leak scenario) without adding a single line of fake functionality
+— a real plausibility bug (P/E ~1667) was caught and fixed during live
+verification in Session 2 rather than shipped, and Session 3's adjustment
+algorithm was deliberately kept off the live dataset rather than risk
+corrupting real (if mock) existing user data for a demo-only benefit. But
+"Aparix, the financial intelligence operating system for India" is still,
+honestly, mostly ahead of this codebase, not behind it — the knowledge
+graph, RAG, and news ingestion are all still at 0%.**

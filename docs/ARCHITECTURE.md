@@ -77,7 +77,8 @@ docker-compose.yml   Optional Postgres (+ Redis, commented out) for those with D
 
 Domain modules inside `apps/api/app/domains/`: `auth`, `users`, `portfolios`,
 `market_data`, `risk`, `simulation`, `events`, `macro`, `admin`,
-`paper_trading`, `broker`, `options`, `fundamentals`, `ai`, `audit`. Each is self-contained
+`paper_trading`, `broker`, `options`, `fundamentals`, `corporate_actions`,
+`ai`, `audit`. Each is self-contained
 (models it owns, its own service layer, its own router) so it can be
 extracted into a separate service later without a rewrite — but this stays a
 single deployable FastAPI app (spec's own guidance: don't create
@@ -192,8 +193,9 @@ enforcing one `paper` and one `broker` portfolio per user), `securities`,
 `events`, `macro_indicators`, `orders`, `broker_connections` (Phase 5 —
 encrypted credential/token columns, never plaintext), `financial_statements`
 (Tier 1 Session 2 — the point-in-time anchor is
-`announcement_date`/`effective_date`, not `created_at`). No speculative
-columns for unbuilt features (e.g.
+`announcement_date`/`effective_date`, not `created_at`),
+`corporate_actions` (Tier 1 Session 3 — same point-in-time anchor pattern).
+No speculative columns for unbuilt features (e.g.
 no `broker_account_id` sitting unused on `portfolios`) — those get added
 when the feature they support gets built. Phase 6 adds **no new table**:
 options chains are computed on request, not stored — see §9.
@@ -364,6 +366,9 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Fundamentals generation anchored to price (Tier 1 S2) | Revenue/PAT/equity derived backward from the security's actual mock price via a target P/E and target ROE, not generated independently | An earlier version generated financials independent of price and produced a P/E of ~1667 for a ~₹3000 stock — internally consistent (every ratio traced correctly) but implausible on sight, a real bug caught during live verification, not a hypothetical | Every ratio lands in a believable band by construction; a quarterly statement's balance-sheet items are sized off *annualized* revenue (equity is a snapshot, not a flow that shrinks to a quarter's size), and valuation ratios annualize flow figures (×4 run-rate) before comparing them to price |
 | Fundamentals announcement lag (Tier 1 S2) | `effective_date` = `announcement_date` ≈ `period_end` + 45–60 days (annual), + 30–45 days (quarterly) | Approximates real Indian corporate reporting timelines without claiming to model any specific company's actual filing calendar | Creates a real, testable gap between "period ended" and "publicly known" — the exact window `tests/test_point_in_time_integrity.py` checks isn't leaked |
 | Point-in-time price (Tier 1 S2) | Historical `Candle` close nearest `as_of` for a past date; live spot only when `as_of` is today/omitted | Consistent point-in-time discipline on both sides of every ratio, not just the fundamentals half | A ratio computed for a past `as_of` never mixes a historical statement with today's price |
+| `Candle.close` convention (Tier 1 S3) | Treated as already-adjusted; corporate actions are historical records, not retroactive price rewrites | Matches how most real market-data feeds present "Close" by default; avoids corrupting existing portfolios/risk/backtest results for currently-tradable mock securities | The mock series correctly shows no artificial discontinuity around a seeded split/bonus — that absence *is* the adjustment, not a gap |
+| Corporate action adjustment scope (Tier 1 S3) | `adjust_price_series()` built and fixture-tested against a synthetic constructed series (a real embedded split discontinuity), not applied to the live seeded universe | Proves the algorithm correct without touching real (if mock) non-disposable local data other features already depend on | Applying it live to this dataset is future work |
+| Disruptive corporate action types (Tier 1 S3) | `merger`/`demerger`/`symbol_change`/`isin_change`/`delisting` supported as schema + adjustment logic, tested via synthetic fixtures only — never seeded against a currently-tradable security | Seeding these against the live universe would break existing paper trading/portfolio/backtest flows for no real benefit | Full survivorship-bias/point-in-time security universe support remains separate future work |
 
 ## 10. Roadmap
 
@@ -569,6 +574,19 @@ would be speculative work (see §9).
   without checking that a stale cached chain (spot price moved since
   computed) isn't served as if current — the whole point of computing on
   request is that a chain always reflects the live simulated spot.
+- Observed live during Tier 1 Session 3 verification: asked
+  `llama3.1` "has TCS paid any dividend recently" with no other context,
+  it called `get_corporate_actions` with a fabricated `as_of` (`2023-12-01`)
+  instead of omitting the optional parameter — the tool correctly returned
+  an empty result for that date, and the model reported that honestly
+  ("no dividend information available as of [that date]"), so the no-
+  fabrication guarantee held (no invented figure), but the *reasoning*
+  about which date to query was wrong. A minor instance of the same
+  general local-model tool-argument unreliability already documented
+  above (described-tool-call repair, Phase 3.5) — noted here rather than
+  chased with more prompt engineering, since the structural guardrail
+  (only ever cite what a real tool call returned) is what actually matters
+  and it worked.
 
 ## 12. Tier 1 infrastructure
 
@@ -649,12 +667,30 @@ Point-in-time pricing applies the same discipline to the price side of a
 ratio: a past `as_of` uses the nearest historical `Candle` close, not
 today's live spot.
 
+**Session 3 — Corporate actions engine** (done): the deferred item above,
+now built. `domains/corporate_actions/` — a `CorporateActionsProvider`
+interface + `MockCorporateActionsProvider` seeding dividends broadly and a
+split/bonus/rights for a deterministic subset of securities (never a
+merger/demerger/symbol_change/delisting against the live tradable
+universe — see §9). `domains/corporate_actions/analytics.py::adjust_price_series()`
+is the real adjustment algorithm — walks actions ex-date-descending,
+multiplies every pre-ex-date price by the cumulative ratio — fixture-tested
+against a hand-constructed raw series with an actual embedded 2-for-1
+split discontinuity (₹200→₹101 raw, adjusts to a smooth ₹100-scale series
+throughout). Not applied to the live seeded candle history this session —
+see the `Candle.close` convention trade-off in §9. `get_corporate_actions`
+is AI tool #18, and carries the same `effective_date <= as_of` point-in-time
+guarantee as fundamentals (`list_actions_as_of()`), tested the same way
+(`tests/test_corporate_actions.py`, mirroring
+`tests/test_point_in_time_integrity.py`'s pattern for a second domain).
+
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
 `docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): real
-news/document domains, macro time-series and vintage tracking, a
-corporate-actions engine (so per-share metrics don't yet account for
-historical splits/bonuses), restatement tracking (every statement is
-`is_restated=False`), a real fundamentals data provider (still `MOCK`
-only), an event-propagation graph, a financial knowledge graph, RAG/document
-intelligence, a historical analogue engine, and portfolio exposure beyond
-sector.
+news/document domains, macro time-series and vintage tracking, retroactively
+adjusting the live seeded candle history for corporate actions,
+survivorship-bias/point-in-time security universe (delisted/renamed/merged
+securities), restatement tracking (every fundamentals statement is
+`is_restated=False`), real data providers for fundamentals/corporate-actions
+(still `MOCK` only), an event-propagation graph, a financial knowledge
+graph, RAG/document intelligence, a historical analogue engine, and
+portfolio exposure beyond sector.
