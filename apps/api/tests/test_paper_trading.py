@@ -1,9 +1,16 @@
+import asyncio
 import random
+import uuid
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
+from app.core.db import AsyncSessionLocal
+from app.domains.auth.service import register_user
 from app.domains.paper_trading.pricing import SLIPPAGE_MAX_PCT, SLIPPAGE_MIN_PCT, apply_slippage, compute_brokerage
+from app.domains.paper_trading.service import get_or_create_paper_portfolio
+from app.models.portfolio import Portfolio
 
 # ── Pricing (pure functions) ────────────────────────────────────────────────
 
@@ -213,3 +220,29 @@ async def test_ai_chat_evaluate_order_intent(client: AsyncClient, auth_headers: 
     body = chat.json()
     assert body["tool_calls"][0]["tool_name"] == "evaluate_order"
     assert body["tool_calls"][0]["result"]["symbol"] == "TCS"
+
+
+# ── Concurrency: the exact race caught live during Phase 4 browser verification ──
+# (/paper's `portfolio` and `orders` queries both call get_or_create_paper_portfolio
+# on mount, independently — without the fix, two concurrent requests can both see
+# "none exists yet" and both insert, crashing a later call with MultipleResultsFound.)
+
+
+async def test_concurrent_get_or_create_never_produces_duplicate_paper_portfolios(client: AsyncClient):
+    async with AsyncSessionLocal() as db:
+        user = await register_user(
+            db, email=f"{uuid.uuid4().hex}@example.com", password="correct-horse-battery", full_name="Race Test"
+        )
+        user_id = user.id
+
+    async def _call() -> uuid.UUID:
+        async with AsyncSessionLocal() as db:
+            portfolio = await get_or_create_paper_portfolio(db, user_id)
+            return portfolio.id
+
+    results = await asyncio.gather(*[_call() for _ in range(5)])
+    assert len(set(results)) == 1  # every concurrent caller resolved to the same account
+
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(select(Portfolio.id).where(Portfolio.user_id == user_id, Portfolio.kind == "paper"))
+        assert len(rows.scalars().all()) == 1  # exactly one row exists, not one per racer

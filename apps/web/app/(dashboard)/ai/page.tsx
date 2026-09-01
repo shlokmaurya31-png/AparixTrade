@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 
 import { AparixAIMessage } from "@/components/aparix/AparixAIMessage";
 import { ComingSoonBadge } from "@/components/aparix/AparixBadge";
@@ -41,6 +41,17 @@ const SUGGESTIONS = [
 ];
 
 export default function AiTerminalPage() {
+  return (
+    <Suspense fallback={null}>
+      <AiTerminalContent />
+    </Suspense>
+  );
+}
+
+// useSearchParams() (for the ?q= prefill handoff from /paper) requires a
+// Suspense boundary for static prerendering — the actual page content lives
+// here, wrapped by the plain default export above.
+function AiTerminalContent() {
   const { portfolio } = usePrimaryPortfolio();
   const { data: user } = useCurrentUser();
   const queryClient = useQueryClient();
@@ -84,6 +95,19 @@ export default function AiTerminalPage() {
       setSending(false);
     }
   }
+
+  // Lets other pages (e.g. /paper's "Ask the AI coach" action) hand off a
+  // pre-filled question via ?q=... instead of building a parallel chat UI —
+  // routes the coaching narration through the same real tool-grounded AI
+  // Terminal flow rather than a second, unverified code path.
+  useEffect(() => {
+    const question = searchParams.get("q");
+    if (question && portfolio && !prefilledQuestionSent.current) {
+      prefilledQuestionSent.current = true;
+      sendMessage(question);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, portfolio]);
 
   return (
     <div className="mx-auto flex h-[calc(100vh-6.5rem)] max-w-3xl flex-col">

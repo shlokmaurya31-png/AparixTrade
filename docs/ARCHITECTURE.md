@@ -1,10 +1,11 @@
 # Aparix — Architecture
 
 Aparix is an AI-native Indian financial intelligence platform. This document
-describes the system as built (Phase 1 + 2 + 3 + 3.5, scoped) and the shape
-it is designed to grow into (Phase 4–6). It is intentionally condensed — the
-full product spec this was derived from runs to ~80 sections; this document
-captures the decisions that matter for engineers picking up the codebase.
+describes the system as built (Phase 1 + 2 + 3 + 3.5 + 4, scoped) and the
+shape it is designed to grow into (Phase 5–6). It is intentionally condensed
+— the full product spec this was derived from runs to ~80 sections; this
+document captures the decisions that matter for engineers picking up the
+codebase.
 
 ## 1. Product shape
 
@@ -75,8 +76,8 @@ docker-compose.yml   Optional Postgres (+ Redis, commented out) for those with D
 ```
 
 Domain modules inside `apps/api/app/domains/`: `auth`, `users`, `portfolios`,
-`market_data`, `risk`, `simulation`, `events`, `macro`, `admin`, `ai`,
-`audit`. Each is self-contained
+`market_data`, `risk`, `simulation`, `events`, `macro`, `admin`,
+`paper_trading`, `ai`, `audit`. Each is self-contained
 (models it owns, its own service layer, its own router) so it can be
 extracted into a separate service later without a rewrite — but this stays a
 single deployable FastAPI app (spec's own guidance: don't create
@@ -101,13 +102,10 @@ microservices before you need them).
   score, simple annualized volatility and beta against the mock NIFTY series.
   These are the only numbers Phase 1 is allowed to show — nothing is
   extrapolated beyond what's actually computed.
-- **`ModelProvider`** interface (`domains/ai/provider.py`) with a
-  `MockModelProvider`: it runs the same tool registry a real LLM would
-  (`get_portfolio`, `get_holdings`, `get_sector_exposure`, `get_market_data`),
-  then fills a response template with the tool's actual return values. It
-  never invents a number. A future `AnthropicModelProvider` implements the
-  identical interface — routing, session/message persistence, and the tool
-  registry are all provider-agnostic already.
+- **`ModelProvider`** interface (`domains/ai/provider.py`) with
+  `MockModelProvider` (keyword-routed templates) and, since Phase 3.5,
+  `OllamaModelProvider` (a real local LLM running an actual tool-calling
+  loop) implementing the identical interface — see §7 for the detail.
 - **Audit log**: `log_action()` is called from every auth and portfolio
   mutation and every AI tool call, writing to `audit_logs` (actor, action,
   input, output, timestamp). Not exhaustive (no IP/device capture yet — no
@@ -140,6 +138,18 @@ microservices before you need them).
   audit logs, AI tool-call usage, system health) behind
   `core/deps.py::get_current_admin_user` — an email allowlist
   (`ADMIN_EMAILS`), not a real roles/permissions system (see §9).
+- **Paper trading engine** (`domains/paper_trading/`, Phase 4): market-order
+  execution against a per-user virtual-capital account (`kind="paper"`),
+  with realistic slippage (`pricing.py::apply_slippage`) and Zerodha-style
+  brokerage (`compute_brokerage`). Reuses the existing `Holding`/
+  `Transaction` models rather than inventing new ones — an order is just a
+  cash-constrained, priced buy/sell against the same tables Phase 1's manual
+  "Add holding" already writes to. `get_or_create_paper_portfolio()` is
+  concurrency-safe: a real TOCTOU race (two requests both seeing "no account
+  yet" and both inserting) was caught live during Phase 4 browser
+  verification, fixed with a DB-level unique partial index
+  (`ix_portfolios_one_paper_per_user`) plus an insert/catch/re-read pattern
+  — see §9 and §11.
 
 ## 5. Database
 
@@ -149,9 +159,11 @@ with Docker). The schema is written using portable SQLAlchemy types
 specifically so this swap is a connection-string change plus an Alembic
 migration, not a rewrite — see the Trade-offs note below.
 
-Tables: `users`, `user_preferences`, `portfolios`, `securities`, `candles`,
-`holdings`, `transactions`, `ai_sessions`, `ai_messages`, `ai_tool_calls`,
-`audit_logs`, `backtests`, `events`, `macro_indicators`. No speculative
+Tables: `users`, `user_preferences`, `portfolios` (now with a nullable
+`cash_balance`, only used by `kind="paper"`), `securities`, `candles`,
+`holdings`, `transactions` (now with a nullable `order_id`), `ai_sessions`,
+`ai_messages`, `ai_tool_calls`, `audit_logs`, `backtests`, `events`,
+`macro_indicators`, `orders`. No speculative
 columns for unbuilt features (e.g.
 no `broker_account_id` sitting unused on `portfolios`) — those get added
 when the feature they support gets built.
@@ -202,15 +214,20 @@ User message → /api/v1/ai/chat
              → response returned to client
 ```
 
-**Tool registry** (`domains/ai/tools.py`, 11 tools): `get_portfolio`,
+**Tool registry** (`domains/ai/tools.py`, 13 tools): `get_portfolio`,
 `get_holdings`, `get_sector_exposure`, `get_market_data` (Phase 1);
 `get_risk_profile`, `run_stress_test`, `run_monte_carlo`, `run_backtest`
 (Phase 2); `get_events`, `get_event_impact`, `get_macro_indicators`
-(Phase 3). Both providers call the exact same functions — one JSON-schema
+(Phase 3); `preview_trade`, `evaluate_order` (Phase 4 — the AI trading
+coach). Both providers call the exact same functions — one JSON-schema
 description per tool for the LLM (`domains/ai/tool_schemas.py`), checked
 against `TOOL_REGISTRY` at import time (`assert_schemas_match_registry()`) so
 a tool added to one without the other fails loudly at startup, not silently
-at runtime.
+at runtime. `preview_trade`/`evaluate_order` deliberately ignore which
+portfolio the AI Terminal session is scoped to and resolve the user's paper
+trading account instead (via the active portfolio's `user_id`) — that's the
+only account real orders execute against, regardless of which portfolio the
+conversation happens to be discussing.
 
 **`OllamaModelProvider`** (`domains/ai/ollama_provider.py`, Phase 3.5): a
 real agentic loop, capped at `MAX_TOOL_ROUNDS=4` — model returns tool_calls,
@@ -239,11 +256,13 @@ the user's saved run history; explicit runs from `/risk` are saved.
 - Every AI-stated number must trace to an `ai_tool_calls` row.
 - Mock data is never presented as live. Unimplemented features say
   `COMING SOON`, not a fabricated result.
-- The product performs analytics/education only in Phase 1 — no order
-  execution exists, so no execution-related compliance surface exists yet.
-  This is a deliberate regulatory boundary, not a gap: broker integration
-  (Phase 5) is the point where compliance/legal review becomes required
-  before anything resembling advice or execution ships.
+- The product performs analytics/education and simulated paper trading only
+  — no real broker connection or real order execution exists (Phase 4's
+  "orders" execute against a virtual-capital account, never real money), so
+  no execution-related compliance surface exists yet. This is a deliberate
+  regulatory boundary, not a gap: broker integration (Phase 5) is the point
+  where compliance/legal review becomes required before anything resembling
+  real advice or execution ships.
 
 ## 9. Trade-offs made explicit
 
@@ -268,6 +287,12 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Checked-in AI default (Phase 3.5) | Stays `AI_PROVIDER=mock` in `.env.example` | The repo must still run with zero external services for anyone who clones it without Ollama installed | This developer's local `apps/api/.env` (gitignored) sets `AI_PROVIDER=ollama` — a per-environment choice |
 | Hallucination guardrail (Phase 3.5) | Zero-tool-calls-but-response-has-numbers → append a caveat. Not a full per-number cross-check | A real per-number matcher has to tolerate reformatting (84398.4 vs "84,398") and would false-positive on nearly every response — worse than no guardrail | Best-effort, not exhaustive — documented as such. "View data source" (unchanged) is the actual verification path: the real tool JSON is always visible |
 | Described-tool-call repair (Phase 3.5) | Detect when the model writes a tool call as JSON-ish text instead of using Ollama's native mechanism, nudge it once to actually call the tool | Observed live during Phase 3.5 verification: `llama3.1` did this on a compound two-part question — not hypothetical | Costs one of the 4 tool-call rounds; if it happens twice in one conversation the second attempt still degrades to an honest message, never fabricated data |
+| Slippage model (Phase 4) | Randomized 0.05–0.15% spread applied at fill time, always unfavorable (buys fill above quote, sells below) | No real order book exists to derive slippage from; a simple, directionally-honest approximation | Every order/preview response states the exact slippage applied in ₹ and %, never hidden inside the fill price |
+| Brokerage model (Phase 4) | Zerodha-style: ₹20 flat or 0.03% of order value, whichever is lower, per executed order | A recognizable, realistic Indian discount-broker convention, kept as a named constant (`domains/paper_trading/pricing.py`) rather than an unexplained magic number | Documented as illustrative, not a claim about this app's real pricing — it's a paper account |
+| Manual "Add holding" vs. paper orders (Phase 4) | Two separate flows stay separate: Phase 1's manual entry is unchanged and still used by `long_term`/`trading` portfolios; `domains/paper_trading` owns cash-constrained buy/sell for `kind="paper"` portfolios only | Different semantics — manual entry is "declare what I already own," an order is "simulate executing a trade right now"; conflating them would blur what's being tested | A `paper` portfolio can't use "Add holding," and a non-paper portfolio has no `cash_balance` and can't place orders — enforced in each router |
+| Paper portfolio creation (Phase 4) | Lazily created (seeded with ₹10L virtual capital) the first time `get_or_create_paper_portfolio()` is called, not at onboarding | Avoids cluttering onboarding with a decision most users won't touch immediately | First `/paper` visit (or first AI coach question about a trade) silently provisions the account — no separate "set up paper trading" step |
+| Post-trade coach scope (Phase 4) | Immediate entry-quality evaluation only — fill price vs. the last 30 trading days' range, not "how did this trade turn out" | No scheduled/delayed re-evaluation mechanism exists in this codebase | `evaluate_order`'s response explicitly states it isn't judging the eventual outcome — the spec's fuller delayed-review vision is future work, not faked with a placeholder number |
+| Paper-portfolio concurrency fix (Phase 4) | DB-level partial unique index (`ix_portfolios_one_paper_per_user`) plus catch-`IntegrityError`-and-re-read in `get_or_create_paper_portfolio()`, instead of relying on application-level locking | A real race was hit live during Phase 4 browser verification: `/paper`'s `portfolio` and `orders` queries both call the same "get or create" function independently on page mount, and without synchronization both could see "none exists" and both insert, corrupting the account into two rows and crashing later lookups with `MultipleResultsFound` | Any future "get or create" style idempotent operation in this codebase should use the same pattern (unique constraint + catch + re-read), not assume a single caller — see §11 |
 
 ## 10. Roadmap
 
@@ -307,8 +332,25 @@ unchanged and stays the checked-in default. Not done: RAG (now unblocked —
 a real model exists to consume it, just not built yet), the Anthropic
 provider (same interface, not implemented).
 
-- **Phase 4 — Paper trading**: order simulator, realistic fills/slippage, AI
-  trading coach (pre/post-trade evaluation).
+**Phase 4 — Paper trading** (done, scoped — see §9): a real order-execution
+simulator (`domains/paper_trading`) — market-order-only buy/sell against the
+existing mock live price, cash-constrained, with randomized slippage and
+Zerodha-style brokerage; a lazily-created paper `Portfolio` (`kind="paper"`)
+seeded with ₹10L virtual capital; two new AI tools (`preview_trade` — a
+what-if impact preview with no DB writes, `evaluate_order` — post-trade
+entry-quality evaluation vs. the 30-day price range), both reachable from
+the `MockModelProvider` keyword router and, for free via the shared
+`TOOL_REGISTRY`, from `OllamaModelProvider`; a `/paper` order-ticket page
+with a live preview-before-you-commit flow and per-order "Ask coach"
+handoff into the AI Terminal. A real concurrency bug (two racing "get or
+create paper portfolio" calls producing duplicate accounts) was caught live
+during browser verification and fixed with a DB-level unique index — see
+§9 and §11. Deliberately not built: limit/stop orders, partial fills or
+order-book depth, margin/leverage, delayed/retrospective outcome tracking
+("how did this trade turn out"), and gamification/leaderboards (the spec
+itself flags trade-volume rewards as risky) — each needs infrastructure
+this phase doesn't have or was explicitly avoided as a bad incentive.
+
 - **Phase 5 — Brokerage**: `BrokerAdapter` interface, Zerodha Kite Connect
   integration (sandbox first), broker credential isolation. This is also the
   point a real compliance/legal review is required before anything ships live.
@@ -366,3 +408,23 @@ provider (same interface, not implemented).
   see a raw-JSON-looking response in the AI Terminal, that heuristic missed
   a new shape of the same failure mode; extend the regex, don't add a
   second detection mechanism.
+- `Base.metadata.create_all()` (`core/db.py::init_models()`) only creates
+  tables that don't exist yet — it does **not** add new columns to an
+  already-existing table. This has bitten the persistent local dev DB
+  twice now (adding `cash_balance`/`order_id` in Phase 4 required a one-off
+  `ALTER TABLE` migration script, not just a server restart). Alembic is
+  scaffolded but not wired into the dev startup path; any future column
+  addition to an existing model needs either a manual migration against
+  the existing `aparix_dev.db` or an Alembic migration before it'll take
+  effect for anyone with a pre-existing database.
+- Any "get or create" idempotent DB operation in this codebase needs
+  either a DB-level unique constraint with a catch-`IntegrityError`-and-
+  re-read pattern, or guaranteed non-concurrent callers — TanStack Query
+  does not dedupe concurrent requests across different query keys that
+  happen to call the same backend operation. `get_or_create_paper_portfolio()`
+  (`domains/paper_trading/service.py`) is the reference implementation of
+  the fix, added after this exact race produced duplicate paper portfolios
+  and a `MultipleResultsFound` crash during Phase 4 browser verification —
+  see §9. Treat any new lazily-created, per-user singleton resource as
+  needing the same pattern from the start, not as an edge case to catch
+  later.

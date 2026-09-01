@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.audit.service import log_action
@@ -30,18 +31,38 @@ class UnknownSymbolError(Exception):
     pass
 
 
+async def _find_paper_portfolio_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
+    # .limit(1) makes this tolerant of any leftover duplicate rows from
+    # before the DB-level unique index existed — never crashes on lookup
+    # even if cleanup was incomplete, though it should always be exactly
+    # one going forward.
+    result = await db.execute(
+        select(Portfolio.id)
+        .where(Portfolio.user_id == user_id, Portfolio.kind == "paper")
+        .order_by(Portfolio.created_at)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_or_create_paper_portfolio(db: AsyncSession, user_id: uuid.UUID) -> Portfolio:
-    result = await db.execute(select(Portfolio.id).where(Portfolio.user_id == user_id, Portfolio.kind == "paper"))
-    existing_id = result.scalar_one_or_none()
+    existing_id = await _find_paper_portfolio_id(db, user_id)
 
     if existing_id is None:
         portfolio = Portfolio(user_id=user_id, name="Paper Trading", kind="paper", cash_balance=STARTING_CAPITAL)
         db.add(portfolio)
-        await log_action(
-            db, user_id=user_id, action="paper.create_account", input_data={"starting_capital": STARTING_CAPITAL}
-        )
-        await db.commit()
-        existing_id = portfolio.id
+        try:
+            await log_action(
+                db, user_id=user_id, action="paper.create_account", input_data={"starting_capital": STARTING_CAPITAL}
+            )
+            await db.commit()
+            existing_id = portfolio.id
+        except IntegrityError:
+            # Lost a real race to a concurrent request (see the unique
+            # index in models/portfolio.py) — that request's row is the
+            # real account now; use it instead of crashing.
+            await db.rollback()
+            existing_id = await _find_paper_portfolio_id(db, user_id)
 
     return await get_portfolio_with_holdings(db, portfolio_id=existing_id, user_id=user_id)
 

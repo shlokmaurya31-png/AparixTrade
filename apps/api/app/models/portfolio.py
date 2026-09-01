@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Numeric, String
+from sqlalchemy import ForeignKey, Index, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -10,6 +10,22 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 class Portfolio(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "portfolios"
+    __table_args__ = (
+        # Enforces "one paper account per user" at the DB level, not just in
+        # application code — domains/paper_trading/service.py's
+        # get_or_create_paper_portfolio() has a real TOCTOU race (two
+        # concurrent requests can both see "none exists yet" and both
+        # insert) that was actually hit during Phase 4 browser verification,
+        # not a hypothetical. The service catches the resulting
+        # IntegrityError and re-reads instead of crashing.
+        Index(
+            "ix_portfolios_one_paper_per_user",
+            "user_id",
+            unique=True,
+            sqlite_where=text("kind = 'paper'"),
+            postgresql_where=text("kind = 'paper'"),
+        ),
+    )
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)

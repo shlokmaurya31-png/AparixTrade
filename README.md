@@ -1,17 +1,20 @@
 # Aparix
 
-AI-native Indian financial intelligence platform. **Phase 1 + 2 + 3 + 3.5**:
-auth, an adaptive dashboard, a portfolio engine, mock Indian market data, a
-risk & simulation engine (VaR/CVaR, Sharpe/Sortino, correlation matrices,
-Monte Carlo, custom stress testing, buy-and-hold backtesting), an event
-intelligence engine (mock news events mapped to sectors/companies with a
-quantified portfolio-impact estimate — the "flood disrupts Reliance's
-Jamnagar operations" scenario, working end to end), a mock macro data feed,
-a read-only admin dashboard, and an AI Terminal that actually understands
-free-form questions — a real local LLM (Ollama, `llama3.1`) calling the same
-tool registry every number in this app already traces back to, never
+AI-native Indian financial intelligence platform. **Phase 1 + 2 + 3 + 3.5 +
+4**: auth, an adaptive dashboard, a portfolio engine, mock Indian market
+data, a risk & simulation engine (VaR/CVaR, Sharpe/Sortino, correlation
+matrices, Monte Carlo, custom stress testing, buy-and-hold backtesting), an
+event intelligence engine (mock news events mapped to sectors/companies
+with a quantified portfolio-impact estimate — the "flood disrupts
+Reliance's Jamnagar operations" scenario, working end to end), a mock macro
+data feed, a read-only admin dashboard, a paper trading simulator (virtual
+₹10L capital, realistic slippage/brokerage, cash-constrained buy/sell — no
+real money, no real broker), and an AI Terminal that actually understands
+free-form questions — a real local LLM (Ollama, `llama3.1`) calling the
+same tool registry every number in this app already traces back to,
+including a pre-trade preview and a post-trade entry-quality coach, never
 inventing a figure. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for
-the full design, trade-offs, and Phase 4–6 roadmap.
+the full design, trade-offs, and Phase 5–6 roadmap.
 
 Everything here runs locally with **no paid APIs, no Docker, and no external
 accounts** — SQLite for the database, a seeded synthetic market for prices,
@@ -49,9 +52,11 @@ complete onboarding (this also creates your default portfolio), add a
 RELIANCE holding on `/portfolio`, then check `/events` — the seeded
 "flooding disrupts Jamnagar" event shows a real, quantified impact on your
 holding. Also explore `/risk` (VaR/CVaR, correlation matrix, stress test,
-Monte Carlo, backtest) and the AI Terminal at `/ai` — try "what's happening
-in the market", "how does this event affect my portfolio", or "stress test
-my portfolio".
+Monte Carlo, backtest), `/paper` (virtual-capital order ticket — preview a
+buy/sell before committing, see real slippage and brokerage, then ask the
+AI coach how the fill looked), and the AI Terminal at `/ai` — try "what's
+happening in the market", "how does this event affect my portfolio",
+"should I buy RELIANCE", or "stress test my portfolio".
 
 To see the admin dashboard: add your account's email to `ADMIN_EMAILS` in
 `apps/api/.env`, restart the API, and log in again — an "Admin" nav item
