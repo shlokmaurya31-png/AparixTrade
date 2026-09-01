@@ -452,6 +452,21 @@ export interface FundamentalRatios {
   is_mock: boolean;
 }
 
+export interface CorporateAction {
+  id: string;
+  symbol: string;
+  action_type: "dividend" | "split" | "bonus" | "rights" | "buyback" | "merger" | "demerger" | "symbol_change" | "isin_change" | "delisting";
+  ratio: number | null;
+  amount: number | null;
+  new_security_symbol: string | null;
+  announcement_date: string;
+  record_date: string | null;
+  ex_date: string;
+  effective_date: string;
+  source: string;
+  is_mock: boolean;
+}
+
 export interface ExpiryList {
   symbol: string;
   expiries: string[];
@@ -596,5 +611,9 @@ export const api = {
       request<FundamentalRatios>(
         `/api/v1/fundamentals/${encodeURIComponent(symbol)}/ratios?period_type=${periodType}`
       ),
+  },
+  corporateActions: {
+    list: (symbol: string) =>
+      request<CorporateAction[]>(`/api/v1/corporate-actions/${encodeURIComponent(symbol)}`),
   },
 };

@@ -7,7 +7,20 @@ import { AparixCard } from "@/components/aparix/AparixCard";
 import { DemoDataBadge } from "@/components/aparix/AparixBadge";
 import { AparixMetric } from "@/components/aparix/AparixMetric";
 import { AparixTable } from "@/components/aparix/AparixTable";
-import { api, type FinancialStatement } from "@/lib/api";
+import { api, type CorporateAction, type FinancialStatement } from "@/lib/api";
+
+const ACTION_TYPE_LABELS: Record<CorporateAction["action_type"], string> = {
+  dividend: "Dividend",
+  split: "Stock split",
+  bonus: "Bonus issue",
+  rights: "Rights issue",
+  buyback: "Buyback",
+  merger: "Merger",
+  demerger: "Demerger",
+  symbol_change: "Symbol change",
+  isin_change: "ISIN change",
+  delisting: "Delisting",
+};
 
 function formatCrore(value: number): string {
   return `₹${new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(value)} cr`;
@@ -43,6 +56,11 @@ export default function FundamentalsPage() {
   const history = useQuery({
     queryKey: ["fundamentals-history", symbol, periodType],
     queryFn: () => api.fundamentals.history(symbol!, periodType),
+    enabled: Boolean(symbol),
+  });
+  const corporateActions = useQuery({
+    queryKey: ["corporate-actions", symbol],
+    queryFn: () => api.corporateActions.list(symbol!),
     enabled: Boolean(symbol),
   });
 
@@ -154,6 +172,28 @@ export default function FundamentalsPage() {
           rows={history.data ?? []}
           keyFor={(s) => `${s.period_end}-${s.period_type}`}
           emptyMessage="No history available."
+        />
+      </AparixCard>
+
+      <AparixCard title="Corporate actions">
+        <AparixTable<CorporateAction>
+          columns={[
+            { header: "Type", render: (a) => ACTION_TYPE_LABELS[a.action_type] },
+            {
+              header: "Detail",
+              render: (a) =>
+                a.ratio != null
+                  ? `Ratio ${a.ratio.toFixed(2)}`
+                  : a.amount != null
+                    ? `₹${a.amount.toFixed(2)}/share`
+                    : "—",
+            },
+            { header: "Ex-date", render: (a) => a.ex_date },
+            { header: "Announced", render: (a) => a.announcement_date },
+          ]}
+          rows={corporateActions.data ?? []}
+          keyFor={(a) => a.id}
+          emptyMessage="No corporate actions on record for this symbol."
         />
       </AparixCard>
     </div>
