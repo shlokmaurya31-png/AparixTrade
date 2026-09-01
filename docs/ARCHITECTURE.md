@@ -1,11 +1,11 @@
 # Aparix — Architecture
 
 Aparix is an AI-native Indian financial intelligence platform. This document
-describes the system as built (Phase 1 + 2 + 3 + 3.5 + 4 + 5, scoped) and the
-shape it is designed to grow into (Phase 6). It is intentionally condensed
-— the full product spec this was derived from runs to ~80 sections; this
-document captures the decisions that matter for engineers picking up the
-codebase.
+describes the system as built (Phase 1 + 2 + 3 + 3.5 + 4 + 5 + 6, scoped) —
+every phase on the original roadmap is now done, scoped as documented below.
+It is intentionally condensed — the full product spec this was derived from
+runs to ~80 sections; this document captures the decisions that matter for
+engineers picking up the codebase.
 
 ## 1. Product shape
 
@@ -77,7 +77,7 @@ docker-compose.yml   Optional Postgres (+ Redis, commented out) for those with D
 
 Domain modules inside `apps/api/app/domains/`: `auth`, `users`, `portfolios`,
 `market_data`, `risk`, `simulation`, `events`, `macro`, `admin`,
-`paper_trading`, `broker`, `ai`, `audit`. Each is self-contained
+`paper_trading`, `broker`, `options`, `ai`, `audit`. Each is self-contained
 (models it owns, its own service layer, its own router) so it can be
 extracted into a separate service later without a rewrite — but this stays a
 single deployable FastAPI app (spec's own guidance: don't create
@@ -165,6 +165,16 @@ microservices before you need them).
   §9. Real order placement through a connected broker is gated behind
   `BROKER_LIVE_TRADING_ENABLED` (default `false`), independent of whether
   real credentials are configured.
+- **Options pricing/Greeks engine** (`domains/options/`, Phase 6):
+  closed-form Black-Scholes (`pricing.py`) — pure functions, fixture-tested
+  against a published textbook reference value and exact algebraic
+  identities (put-call parity, `delta_call - delta_put == 1`), not just
+  eyeballed numbers. `service.py` generates a synthetic options chain
+  on request (not persisted — see §9): a strike ladder around the live
+  simulated spot price, an assumed volatility skew, and per-contract
+  premium/Greeks priced off that. Deterministic per symbol+expiry (seeded
+  RNG, same approach as `MockMarketDataProvider`). Read-only analysis
+  only — no options positions, no paper trading of contracts, this phase.
 
 ## 5. Database
 
@@ -183,7 +193,8 @@ enforcing one `paper` and one `broker` portfolio per user), `securities`,
 encrypted credential/token columns, never plaintext). No speculative
 columns for unbuilt features (e.g.
 no `broker_account_id` sitting unused on `portfolios`) — those get added
-when the feature they support gets built.
+when the feature they support gets built. Phase 6 adds **no new table**:
+options chains are computed on request, not stored — see §9.
 
 ## 6. Frontend architecture
 
@@ -205,7 +216,18 @@ when the feature they support gets built.
   fixed rather than worked around.
 - State: TanStack Query for all server state (portfolio, market data, AI
   sessions); a small Zustand store for local UI state (complexity level
-  mirror, command bar open/closed, AI mode).
+  mirror, command bar open/closed, AI mode, and — Phase 6 — the selected
+  portfolio for the header `PortfolioSwitcher`).
+- **Multi-portfolio** (Phase 6): `GET /portfolios` already returned every
+  portfolio a user owns since Phase 1 (no backend work needed) — the gap was
+  the frontend hard-locking to `portfolios.data[0]`. `usePrimaryPortfolio()`
+  (`lib/use-portfolio.ts`) now resolves the switcher's selection instead,
+  falling back to the first portfolio if nothing's chosen (or the selection
+  no longer exists). Paper trading and broker accounts are excluded from the
+  switcher (`isSwitchablePortfolio()`) — they have their own dedicated pages
+  and a different account shape (cash-based / broker-synced), not something
+  to "switch into" alongside a user's own long_term/trading/options/
+  experimental portfolios.
 - Every value sourced from mock data carries a visible "DEMO DATA" /
   "SIMULATED" tag in the UI — non-negotiable per the product's anti-faking
   principle (§8).
@@ -231,35 +253,43 @@ User message → /api/v1/ai/chat
              → response returned to client
 ```
 
-**Tool registry** (`domains/ai/tools.py`, 14 tools): `get_portfolio`,
+**Tool registry** (`domains/ai/tools.py`, 16 tools): `get_portfolio`,
 `get_holdings`, `get_sector_exposure`, `get_market_data` (Phase 1);
 `get_risk_profile`, `run_stress_test`, `run_monte_carlo`, `run_backtest`
 (Phase 2); `get_events`, `get_event_impact`, `get_macro_indicators`
 (Phase 3); `preview_trade`, `evaluate_order` (Phase 4 — the AI trading
-coach); `get_broker_holdings` (Phase 5). Both providers call the exact same
-functions — one JSON-schema description per tool for the LLM
-(`domains/ai/tool_schemas.py`), checked against `TOOL_REGISTRY` at import
-time (`assert_schemas_match_registry()`) so a tool added to one without the
-other fails loudly at startup, not silently at runtime. `preview_trade`/
-`evaluate_order`/`get_broker_holdings` all deliberately ignore which
-portfolio the AI Terminal session is scoped to and resolve the user's paper
-trading or broker account instead (via the active portfolio's `user_id`) —
-those are the only accounts real/simulated orders and real broker holdings
-resolve against, regardless of which portfolio the conversation happens to
-be discussing. `get_broker_holdings` returns an honest error (not a
-fabricated empty list) when no broker is connected.
+coach); `get_broker_holdings` (Phase 5); `get_options_chain`, `price_option`
+(Phase 6). Both providers call the exact same functions — one JSON-schema
+description per tool for the LLM (`domains/ai/tool_schemas.py`), checked
+against `TOOL_REGISTRY` at import time (`assert_schemas_match_registry()`)
+so a tool added to one without the other fails loudly at startup, not
+silently at runtime. `preview_trade`/`evaluate_order`/`get_broker_holdings`
+all deliberately ignore which portfolio the AI Terminal session is scoped
+to and resolve the user's paper trading or broker account instead (via the
+active portfolio's `user_id`) — those are the only accounts real/simulated
+orders and real broker holdings resolve against, regardless of which
+portfolio the conversation happens to be discussing. `get_broker_holdings`
+returns an honest error (not a fabricated empty list) when no broker is
+connected. `get_options_chain` truncates to the 10 strikes nearest the
+money and says so (`note` field) — a full chain (17 strikes × 2 types) is
+more than a model needs for a typical question, the same "sensible default,
+state it" pattern `get_macro_indicators_tool` already used.
 
 **`OllamaModelProvider`** (`domains/ai/ollama_provider.py`, Phase 3.5): a
 real agentic loop, capped at `MAX_TOOL_ROUNDS=4` — model returns tool_calls,
 each executes for real, results feed back as `role: "tool"` messages, repeat
 until the model returns plain text. A mode-specific system prompt
 (`MODE_INSTRUCTIONS`) makes `simple/quant/analyst/risk_officer/
-portfolio_manager/macro_economist` genuinely different response styles from
-one model, not six hand-written templates; `options_specialist`/`researcher`
-get an explicit instruction to say those capabilities don't exist rather
-than improvise a persona with no data behind it. `GET /api/v1/ai/config`
-exposes which provider/modes are actually live so the frontend's mode
-switcher never overclaims what a given provider can do.
+portfolio_manager/macro_economist/options_specialist` genuinely different
+response styles from one model, not hand-written templates — Phase 6 moved
+`options_specialist` from the honest-decline fallback into this real list
+now that `get_options_chain`/`price_option` exist. `researcher` is now the
+only mode still declining (no RAG/document store exists to back cited
+research). `GET /api/v1/ai/config` exposes which provider/modes are
+actually live so the frontend's mode switcher never overclaims what a
+given provider can do — the `options_specialist` badge automatically
+stopped showing "Coming soon" the moment the backend registered it, no
+frontend change needed.
 
 The **mock router** stays exactly as simple as before (keyword matching, a
 handful of supported questions, sensible stated defaults for tool
@@ -276,10 +306,12 @@ the user's saved run history; explicit runs from `/risk` are saved.
 - Every AI-stated number must trace to an `ai_tool_calls` row.
 - Mock data is never presented as live. Unimplemented features say
   `COMING SOON`, not a fabricated result.
-- The product performs analytics/education and simulated paper trading only
-  — no real broker connection or real order execution exists (Phase 4's
-  "orders" execute against a virtual-capital account, never real money), so
-  no execution-related compliance surface exists yet. This is a deliberate
+- The product performs analytics/education, simulated paper trading, and
+  read-only options analysis (Phase 6 — chain/Greeks only, no options
+  positions or trading) — no real broker connection or real order execution
+  exists (Phase 4's "orders" execute against a virtual-capital account,
+  never real money), so no execution-related compliance surface exists yet.
+  This is a deliberate
   regulatory boundary, not a gap: broker integration (Phase 5) is the point
   where compliance/legal review becomes required before anything resembling
   real advice or execution ships.
@@ -292,7 +324,7 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Monorepo tooling | npm workspaces, no Turborepo/pnpm | pnpm not installed; avoids adding infra before it's needed | Two dev commands instead of one; documented in README |
 | Redis / Kafka | Deferred | Nothing built so far needs caching or a message bus | `docker-compose.yml` has Redis commented out |
 | AI provider (checked-in default) | Mock, behind `ModelProvider` interface | No paid LLM dependency for local dev/demo out of the box | `OllamaModelProvider` (Phase 3.5) proved the interface — an `AnthropicModelProvider` would be the same shape, one new file |
-| Charting | Recharts only | Candlestick/vol-surface charts belong to Markets/Options pages (Phase 3/6) | No TradingView-class library pulled in yet |
+| Charting | Recharts only | Candlestick charts belong to a future Markets page; Phase 6's options page uses a 2D IV-vs-strike line chart, not a 3D vol surface, for the same reason (see the Phase 6 row below) | No TradingView-class library pulled in yet |
 | VaR/CVaR method (Phase 2) | Historical simulation (empirical percentile of actual returns), not parametric | No distributional assumption — consistent with never faking numbers | Needs real sample size; below 20 observations the API returns `null`, not a number computed from noise — surfaced in the UI as an explicit "not enough history" state |
 | Risk-free rate | Sourced from the mock `macro_indicators.gsec_10y` row (Phase 3), falling back to the 6.5% constant | Phase 3 added the macro domain, giving this a proper home | Still the same 6.5% mock value, still not RBI-fetched — a structural improvement, not a data-freshness one (documented in the UI, not oversold) |
 | Monte Carlo method (Phase 2) | GBM and historical bootstrap, both portfolio-level (not multi-asset correlated) | Simplest two defensible methods; a covariance-aware multi-asset simulator is a bigger build | Every result states which method and its assumptions; correlation/covariance *are* computed and shown separately on `/risk`, just not fed into the simulator yet |
@@ -319,6 +351,13 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Broker holdings pricing (Phase 5) | A synced broker holding's live price/P&L still comes from this app's own simulated market data, not Zerodha's real quotes | Phase 1's mock market data is the only live pricing feed that exists in this codebase — Kite Connect's own quote/streaming API isn't wired in this phase | A broker-synced position's *quantity and average price* are real (from the broker), but its *current price and P&L* are simulated — stated in the UI via the Demo Data badge, not conflated as fully real |
 | Broker holdings outside the seeded universe (Phase 5) | A real broker holding in a symbol outside this app's seeded NIFTY-subset securities is skipped during sync, reported back as `skipped_symbols`, not fabricated a price for | This app can only price/analyze the ~20 seeded securities (see §11) | A real Zerodha account holding e.g. a small-cap or ETF outside that set will show fewer synced positions than the real account has — an honest, visible limitation, not silently wrong totals |
 | Broker portfolio is read-only in-app (Phase 5) | No "Add holding" equivalent for `kind="broker"` portfolios — the only way its holdings change is a Sync | A broker portfolio's whole purpose is mirroring an external source of truth; a manually-edited row would silently drift from what the broker actually shows | Same restriction pattern as `kind="paper"` (Phase 4) applied consistently to the new kind |
+| Options data model (Phase 6) | Not persisted — chains/Greeks computed on request from the live simulated spot price and an assumed IV, using closed-form Black-Scholes | A chain is combinatorial (strikes × expiries × 2 types) and fully derived; persisting it would misrepresent computed numbers as an independently observed feed | Deterministic per symbol+expiry (seeded RNG) but there's no "options candle history" table — honest, since none is fabricated |
+| Options volatility surface (Phase 6) | A synthetic, deterministic skew — higher IV for strikes below spot — as a function of moneyness; assumed, not solved from real prices | No real options market exists to calibrate against; "implied" vol computed from nothing would be circular | Every contract states `iv_pct` is assumed, mirroring how the mock risk-free rate is already labeled (§9 above) |
+| Options expiry calendar (Phase 6) | A small synthetic set of near-term Thursdays (`list_expiries()`), not NSE's real weekly/monthly expiry rules (holiday adjustments, index-vs-stock differences) | Reproducing NSE's actual calendar is a data-ingestion problem, not a pricing one | Plausible dates, not guaranteed to match a real NSE expiry |
+| Options trading scope (Phase 6) | Read-only chain/Greeks analysis only — no options positions, no options paper trading, no exercise/assignment mechanics | The equities-only paper trading engine (Phase 4) has no concept of options margin, exercise, or expiry settlement — building that is a project of its own | The `kind="options"` portfolio value (present in the schema since Phase 1) stays unused; the AI's `options_specialist` mode is explicitly instructed never to imply the user holds a position |
+| Vol surface visualization (Phase 6) | A 2D IV-vs-strike line chart (Recharts), not a 3D strike × expiry × IV surface | Recharts doesn't support 3D, and pulling in a second charting library conflicts with the standing "Recharts only" decision (§9 above) | "Vol surfaces" in the roadmap description ships as this 2D analog, not the literal 3D chart |
+| Institutional dashboards (Phase 6) | Scoped down to multi-portfolio (still single-user) instead of true multi-client | "Institutional" in the original spec implies an advisor managing multiple *clients'* accounts, which needs a Client/Advisor relationship model that doesn't exist anywhere in this codebase; building one is a separate, bigger project | What shipped instead: a header portfolio switcher plus an "All portfolios" aggregate view (`/portfolio`) — real value for one user with several portfolios, not the full institutional/family-office vision |
+| Public APIs and billing tiers (Phase 6) | Deferred entirely, not stubbed | No external API consumer or tier-gated feature exists yet to justify either; an unused `tier` column or API-key auth surface would be speculative work ahead of need (the same reasoning RAG was deferred under until Phase 3.5 gave it a consumer) | JWT-only auth remains the only auth mechanism; revisit if/when there's an actual external caller or a concrete feature to gate |
 
 ## 10. Roadmap
 
@@ -348,9 +387,11 @@ allowlist stands in for it).
 **Phase 3.5 — Wire the LLM** (done): `OllamaModelProvider`
 (`domains/ai/ollama_provider.py`) — a real agentic tool-calling loop against
 local `llama3.1`, using the identical `TOOL_REGISTRY` every prior phase
-built and tested. Six AI modes are now real style variants from one model
+built and tested. Six AI modes were now real style variants from one model
 (`simple/quant/analyst/risk_officer/portfolio_manager/macro_economist`);
-`options_specialist`/`researcher` still honestly decline. A best-effort
+`options_specialist`/`researcher` still honestly declined at the time —
+`options_specialist` became real in Phase 6 once options tools existed to
+back it; `researcher` still honestly declines (see Phase 6 below). A best-effort
 hallucination guardrail and a described-tool-call repair loop (found live
 during verification — see §9) harden it against the specific ways an 8B
 open model is less reliable than a frontier one. `MockModelProvider` is
@@ -397,9 +438,25 @@ streams (reuses the existing polling quote pattern instead), margin/
 leverage visibility, and multi-broker-per-user support (one connection per
 broker per user, enforced by a DB-level unique index).
 
-**Phase 6 — Professional**: options workspace (unblocks Greeks/vol
-surfaces), institutional dashboards, multi-portfolio/family-office
-features, public APIs, billing tiers.
+**Phase 6 — Professional** (done, scoped — see §9; the last roadmap phase):
+a read-only options analysis engine (`domains/options/`) — closed-form
+Black-Scholes pricing/Greeks (`pricing.py`, fixture-tested against a
+published reference value and exact identities), synthetic options chains
+generated on request (not persisted) around the live simulated spot price
+with an assumed volatility skew; a `/options` page (chain table, 2D
+IV-vs-strike smile chart); two new AI tools (`get_options_chain`,
+`price_option`) and a real `options_specialist` AI mode (previously an
+honest-decline stub). Multi-portfolio support: a header portfolio switcher
+and an "All portfolios" aggregate view (`/portfolio`), built almost
+entirely on the frontend since `GET /portfolios` already supported multiple
+portfolios per user since Phase 1. Deliberately not built: options
+*trading* (no positions, no exercise/assignment), index options (chains
+work for any seeded symbol including `NIFTY50`/`BANKNIFTY` since they
+already have simulated quotes — this was originally planned as deferred,
+turned out to already work for free), a full 3D vol surface, true
+multi-client institutional dashboards, public APIs, and billing tiers —
+the last four have no existing data model or consumer to build on and
+would be speculative work (see §9).
 
 ## 11. Known technical risks
 
@@ -490,3 +547,19 @@ features, public APIs, billing tiers.
   polling, both bigger changes than Phase 5's scope. If a UI action seems
   slow to respond during manual testing, check for concurrent AI/WebSocket
   activity in the same browser session before assuming a new bug.
+- The AI Terminal's mode buttons (`apps/web/app/(dashboard)/ai/page.tsx`)
+  are `disabled` until `GET /api/v1/ai/config` resolves — clicking one
+  immediately after navigating to `/ai`, before that response lands, is a
+  no-op. This surfaced during Phase 6 verification as an apparently-broken
+  mode switch (the click did nothing, the chat request used the old mode);
+  it's expected behavior working as designed, not a bug — a test script (or
+  a very fast real click) needs to wait for the config response, not a
+  fixed delay, before clicking a mode button.
+- `domains/options/service.py`'s chain generation is stateless and
+  in-memory (no DB writes), so unlike every "get or create" singleton
+  pattern above, it has no concurrency story to worry about — two
+  concurrent requests for the same symbol+expiry just independently
+  recompute the identical deterministic result. Don't add caching here
+  without checking that a stale cached chain (spot price moved since
+  computed) isn't served as if current — the whole point of computing on
+  request is that a chain always reflects the live simulated spot.

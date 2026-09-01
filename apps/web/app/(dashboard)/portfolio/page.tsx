@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
@@ -8,13 +8,82 @@ import { AparixCard } from "@/components/aparix/AparixCard";
 import { DemoDataBadge } from "@/components/aparix/AparixBadge";
 import { AparixTable } from "@/components/aparix/AparixTable";
 import { api, ApiError, type Holding } from "@/lib/api";
-import { usePrimaryPortfolio } from "@/lib/use-portfolio";
+import { isSwitchablePortfolio, usePrimaryPortfolio } from "@/lib/use-portfolio";
 
 const PIE_COLORS = ["#5b8ff9", "#3ecf7e", "#e0a542", "#f2555a", "#9b7bf0", "#4fd1c5", "#f0a3d0", "#8b93a1"];
 
 function formatInr(value: number): string {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
     value
+  );
+}
+
+/** "All my portfolios" — combined totals across every long_term/trading/
+ * options/experimental portfolio the user owns (not paper/broker, which
+ * have their own accounts). The "family office, lite" piece of Phase 6:
+ * real value for a single power user with several portfolios, not the full
+ * multi-client institutional dashboard described in the original spec —
+ * see docs/ARCHITECTURE.md Phase 6 trade-offs. */
+function AllPortfoliosSummary() {
+  const portfolios = useQuery({ queryKey: ["portfolios"], queryFn: api.portfolios.list });
+  const switchable = (portfolios.data ?? []).filter(isSwitchablePortfolio);
+
+  const analyticsQueries = useQueries({
+    queries: switchable.map((p) => ({
+      queryKey: ["portfolio", p.id, "analytics"],
+      queryFn: () => api.portfolios.analytics(p.id),
+    })),
+  });
+
+  if (switchable.length < 2) return null; // nothing to aggregate for a single portfolio
+
+  const loaded = analyticsQueries.filter((q) => q.data).map((q) => q.data!);
+  const totalValue = loaded.reduce((sum, a) => sum + a.total_value, 0);
+  const totalDayPnl = loaded.reduce((sum, a) => sum + a.day_pnl, 0);
+  const totalDayPnlPct = totalValue ? (totalDayPnl / (totalValue - totalDayPnl)) * 100 : 0;
+
+  return (
+    <AparixCard title={`All portfolios (${switchable.length})`}>
+      <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Combined value</div>
+          <div className="font-mono-nums mt-1 text-xl font-semibold tabular-nums">{formatInr(totalValue)}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Combined day P&amp;L</div>
+          <div
+            className={`font-mono-nums mt-1 text-xl font-semibold tabular-nums ${totalDayPnl >= 0 ? "text-positive" : "text-negative"}`}
+          >
+            {formatInr(totalDayPnl)} ({totalDayPnlPct.toFixed(2)}%)
+          </div>
+        </div>
+      </div>
+      <AparixTable<{ id: string; name: string; kind: string; value: number; dayPnlPct: number }>
+        columns={[
+          { header: "Portfolio", render: (r) => r.name },
+          { header: "Kind", render: (r) => <span className="text-muted-foreground">{r.kind}</span> },
+          { header: "Value", align: "right", render: (r) => formatInr(r.value) },
+          {
+            header: "Day P&L",
+            align: "right",
+            render: (r) => (
+              <span className={r.dayPnlPct >= 0 ? "text-positive" : "text-negative"}>
+                {r.dayPnlPct >= 0 ? "+" : ""}
+                {r.dayPnlPct.toFixed(2)}%
+              </span>
+            ),
+          },
+        ]}
+        rows={switchable.map((p, i) => ({
+          id: p.id,
+          name: p.name,
+          kind: p.kind,
+          value: analyticsQueries[i].data?.total_value ?? 0,
+          dayPnlPct: analyticsQueries[i].data?.day_pnl_pct ?? 0,
+        }))}
+        keyFor={(r) => r.id}
+      />
+    </AparixCard>
   );
 }
 
@@ -65,6 +134,8 @@ export default function PortfolioPage() {
         <DemoDataBadge />
       </div>
 
+      <AllPortfoliosSummary />
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <AparixCard title="Holdings" className="lg:col-span-2">
           <AparixTable<Holding>
@@ -109,7 +180,7 @@ export default function PortfolioPage() {
         </AparixCard>
       </div>
 
-      <AparixCard title="Add holding (manual entry — broker sync is Phase 5)">
+      <AparixCard title="Add holding (manual entry — see /broker to sync a real account instead)">
         <form onSubmit={onAddHolding} className="flex flex-wrap items-end gap-3">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Symbol</label>

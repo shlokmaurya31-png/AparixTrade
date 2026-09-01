@@ -16,6 +16,7 @@ interface Command {
 const COMMANDS: Command[] = [
   { id: "home", label: "Go to Home", hint: "Command center", run: (r) => r.push("/home") },
   { id: "portfolio", label: "Go to Portfolio", hint: "Holdings & analytics", run: (r) => r.push("/portfolio") },
+  { id: "options", label: "Go to Options", hint: "Chain, Greeks & IV (analysis only)", run: (r) => r.push("/options") },
   { id: "paper", label: "Go to Paper Trading", hint: "Simulated orders & AI coach", run: (r) => r.push("/paper") },
   { id: "broker", label: "Go to Broker", hint: "Connect & sync a real brokerage account", run: (r) => r.push("/broker") },
   { id: "risk", label: "Go to Risk & Simulation", hint: "VaR, Monte Carlo, stress test, backtest", run: (r) => r.push("/risk") },

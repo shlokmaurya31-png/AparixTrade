@@ -107,6 +107,26 @@ class MockModelProvider(ModelProvider):
             data = await use("get_broker_holdings")
             text = self._broker_holdings_text(data, mode)
 
+        elif any(
+            k in lowered
+            for k in [
+                "options chain", "option chain", "greeks", "implied volatility", "delta", "gamma", "theta",
+                "vega", "call option", "put option", "strike price",
+            ]
+        ):
+            symbol = self._guess_symbol(message) or "RELIANCE"
+            if "chain" in lowered:
+                data = await use("get_options_chain", symbol=symbol)
+                text = self._options_chain_text(data, mode)
+            else:
+                option_type = "put" if "put" in lowered else "call"
+                kwargs: dict[str, Any] = {"symbol": symbol, "option_type": option_type}
+                strike_match = re.search(r"\b(\d{2,6}(?:\.\d+)?)\b", message)
+                if strike_match:
+                    kwargs["strike"] = float(strike_match.group(1))
+                data = await use("price_option", **kwargs)
+                text = self._price_option_text(data, mode)
+
         elif any(k in lowered for k in ["sector", "concentrat", "diversif"]):
             data = await use("get_sector_exposure")
             text = self._sector_exposure_text(data["sector_exposure"], mode)
@@ -378,6 +398,58 @@ class MockModelProvider(ModelProvider):
         return (
             f"Your {data['broker']} account{mock_note} holds {len(data['holdings'])} positions worth about "
             f"{data['total_value']:.0f} INR. [DEMO DATA]"
+        )
+
+    @staticmethod
+    def _options_chain_text(data: dict, mode: str) -> str:
+        if "error" in data:
+            return f"Couldn't get that options chain: {data['error']} [DEMO DATA]"
+        contracts = data["contracts"]
+        if not contracts:
+            return "No option contracts available. [DEMO DATA]"
+        atm_call = min(
+            (c for c in contracts if c["option_type"] == "call"),
+            key=lambda c: abs(c["strike"] - data["spot"]),
+            default=None,
+        )
+        if mode == "quant":
+            lines = "; ".join(
+                f"{c['option_type']} {c['strike']} @ {c['premium']:.2f} (IV {c['iv_pct']:.1f}%, delta {c['delta']:.2f})"
+                for c in contracts[:6]
+            )
+            return (
+                f"{data['symbol']} chain, expiry {data['expiry']} ({data['days_to_expiry']}d), spot "
+                f"{data['spot']:.2f}: {lines}. Risk-free rate {data['risk_free_rate_annual_pct']}%. {data['note']} "
+                f"[DEMO DATA — synthetic chain, assumed IV, not a real options market]"
+            )
+        atm_note = (
+            f" The near-the-money {atm_call['strike']:.0f} call is priced around {atm_call['premium']:.2f} INR "
+            f"(assumed IV {atm_call['iv_pct']:.0f}%)."
+            if atm_call
+            else ""
+        )
+        return (
+            f"{data['symbol']} spot is {data['spot']:.2f}, options expiring {data['expiry']} "
+            f"({data['days_to_expiry']} days out).{atm_note} [DEMO DATA — synthetic chain, assumed volatility, "
+            f"not a real options market]"
+        )
+
+    @staticmethod
+    def _price_option_text(data: dict, mode: str) -> str:
+        if "error" in data:
+            return f"Couldn't price that option: {data['error']} [DEMO DATA]"
+        if mode == "quant":
+            return (
+                f"{data['symbol']} {data['strike']:.0f} {data['option_type']} exp {data['expiry']}: premium "
+                f"{data['premium']:.2f} INR, IV {data['iv_pct']:.1f}% (assumed), delta {data['delta']:.4f}, "
+                f"gamma {data['gamma']:.6f}, theta {data['theta']:.4f}/day, vega {data['vega']:.4f}, "
+                f"rho {data['rho']:.4f}. [DEMO DATA — synthetic pricing]"
+            )
+        return (
+            f"The {data['symbol']} {data['strike']:.0f} {data['option_type']} expiring {data['expiry']} is "
+            f"priced around {data['premium']:.2f} INR under an assumed {data['iv_pct']:.0f}% implied "
+            f"volatility, with a delta of {data['delta']:.2f}. [DEMO DATA — synthetic pricing, not a real "
+            f"options market]"
         )
 
     @staticmethod

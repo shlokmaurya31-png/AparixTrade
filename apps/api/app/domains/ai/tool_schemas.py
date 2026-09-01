@@ -204,6 +204,46 @@ TOOL_SCHEMAS: list[dict] = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_options_chain",
+            "description": (
+                "Get a synthetic options chain (calls and puts) for a stock: strikes near the current price, "
+                "premium, implied volatility (assumed, not market-derived), and Greeks (delta/gamma/theta/vega/rho). "
+                "If expiry is omitted, uses the nearest available synthetic expiry."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Underlying stock symbol, e.g. RELIANCE, TCS."},
+                    "expiry": {"type": "string", "description": "Expiry date (YYYY-MM-DD), from the available list. Optional."},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "price_option",
+            "description": (
+                "Price a single option contract (call or put) at a specific strike: premium, implied volatility, "
+                "and Greeks. If strike is omitted, uses the nearest at-the-money strike. If expiry is omitted, "
+                "uses the nearest available synthetic expiry."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Underlying stock symbol, e.g. RELIANCE, TCS."},
+                    "strike": {"type": "number", "description": "Strike price. Optional — defaults to at-the-money."},
+                    "option_type": {"type": "string", "enum": ["call", "put"]},
+                    "expiry": {"type": "string", "description": "Expiry date (YYYY-MM-DD). Optional."},
+                },
+                "required": ["symbol", "option_type"],
+            },
+        },
+    },
 ]
 
 _SCHEMA_NAMES = {schema["function"]["name"] for schema in TOOL_SCHEMAS}

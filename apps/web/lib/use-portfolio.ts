@@ -2,14 +2,30 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
+import { api, type Portfolio } from "@/lib/api";
+import { useAppStore } from "@/store/app-store";
 
-/** Phase 1 gives every user a single default portfolio (created during
- * onboarding — see app/onboarding/page.tsx). Multi-portfolio comparison is
- * Phase 6 (§36 of the product spec); this hook just returns the first one. */
+// GET /portfolios returns every portfolio row for the user, including the
+// lazily-created "paper" and "broker" singleton accounts (domains/paper_trading,
+// domains/broker) — those have their own dedicated pages (/paper, /broker)
+// and a different shape (cash-based / broker-synced), so they're excluded
+// from "my portfolios" here and in the switcher (PortfolioSwitcher.tsx).
+export function isSwitchablePortfolio(p: Portfolio): boolean {
+  return p.kind !== "paper" && p.kind !== "broker";
+}
+
+/** Onboarding creates one default portfolio, but a user can create more
+ * (Phase 6 — see components/aparix/PortfolioSwitcher.tsx). This hook
+ * resolves the "active" one: whichever the switcher selected, or the first
+ * (switchable) portfolio in the list if nothing's been explicitly chosen
+ * yet (or the selected one no longer exists, e.g. it was on another
+ * device). */
 export function usePrimaryPortfolio() {
   const portfolios = useQuery({ queryKey: ["portfolios"], queryFn: api.portfolios.list });
-  const primary = portfolios.data?.[0] ?? null;
+  const switchable = (portfolios.data ?? []).filter(isSwitchablePortfolio);
+  const selectedId = useAppStore((s) => s.selectedPortfolioId);
+  const selected = selectedId ? switchable.find((p) => p.id === selectedId) : undefined;
+  const primary = selected ?? switchable[0] ?? null;
 
   // All portfolio-derived queries share the ["portfolio", id, ...] prefix
   // specifically so a mutation (e.g. adding a holding) can invalidate every

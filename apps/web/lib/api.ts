@@ -389,6 +389,33 @@ export interface BrokerOrderResult {
   message: string | null;
 }
 
+export interface ExpiryList {
+  symbol: string;
+  expiries: string[];
+}
+
+export interface OptionContract {
+  strike: number;
+  option_type: "call" | "put";
+  premium: number;
+  iv_pct: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  rho: number;
+}
+
+export interface OptionChain {
+  symbol: string;
+  spot: number;
+  expiry: string;
+  days_to_expiry: number;
+  risk_free_rate_annual_pct: number;
+  contracts: OptionContract[];
+  is_mock: boolean;
+}
+
 // ── API surface ─────────────────────────────────────────────────────────
 
 export const api = {
@@ -483,5 +510,13 @@ export const api = {
     portfolio: () => request<BrokerPortfolio>("/api/v1/broker/portfolio"),
     placeOrder: (payload: { symbol: string; side: "buy" | "sell"; quantity: number }) =>
       request<BrokerOrderResult>("/api/v1/broker/orders", { method: "POST", body: JSON.stringify(payload) }),
+  },
+  options: {
+    expiries: (symbol: string) =>
+      request<ExpiryList>(`/api/v1/options/expiries?symbol=${encodeURIComponent(symbol)}`),
+    chain: (symbol: string, expiry: string) =>
+      request<OptionChain>(
+        `/api/v1/options/chain?symbol=${encodeURIComponent(symbol)}&expiry=${encodeURIComponent(expiry)}`
+      ),
   },
 };

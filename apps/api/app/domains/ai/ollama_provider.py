@@ -62,13 +62,21 @@ MODE_INSTRUCTIONS: dict[str, str] = {
         "Respond emphasizing macro context (rates, inflation, growth, currency) and how it connects to the "
         "portfolio — use get_macro_indicators when relevant."
     ),
+    "options_specialist": (
+        "Respond like an options desk analyst: use get_options_chain and price_option for real premium/IV/Greeks "
+        "figures, and explain what delta/gamma/theta/vega actually mean for the position being discussed rather "
+        "than just reciting numbers. Always be explicit that the implied volatility is an assumed synthetic "
+        "value, not solved from a real market, and that this platform only supports read-only options analysis — "
+        "there is no options paper trading or position tracking yet, so never imply the user holds an options "
+        "position unless they've said so."
+    ),
 }
 
 FALLBACK_MODE_NOTE = (
-    "The user's selected AI mode ('{mode}') isn't backed by real data yet — this platform has no options-"
-    "analytics or cited-research data source built. Answer in the plain, beginner-friendly 'simple' style "
-    "instead, and if the question genuinely needs options or cited-research data, say that capability isn't "
-    "available yet rather than improvising a persona you can't back up."
+    "The user's selected AI mode ('{mode}') isn't backed by real data yet — this platform has no cited-research "
+    "data source built (no RAG/document store). Answer in the plain, beginner-friendly 'simple' style instead, "
+    "and if the question genuinely needs cited research, say that capability isn't available yet rather than "
+    "improvising a persona you can't back up."
 )
 
 _NUMBER_RE = re.compile(r"\d[\d,]*\.?\d*")

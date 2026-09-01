@@ -4,12 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { AparixCommandBar } from "@/components/aparix/AparixCommandBar";
+import { PortfolioSwitcher } from "@/components/aparix/PortfolioSwitcher";
 import { useLogout, useRequireAuth } from "@/lib/use-auth";
 import { useAppStore } from "@/store/app-store";
 
 const NAV_ITEMS = [
   { href: "/home", label: "Home" },
   { href: "/portfolio", label: "Portfolio" },
+  { href: "/options", label: "Options" },
   { href: "/paper", label: "Paper Trading" },
   { href: "/broker", label: "Broker" },
   { href: "/risk", label: "Risk" },
@@ -59,7 +61,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-border px-6 py-3">
+        <header className="flex items-center justify-between gap-3 border-b border-border px-6 py-3">
           <button
             onClick={() => setCommandBarOpen(true)}
             className="w-80 rounded border border-border bg-transparent px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-surface-hover"
@@ -67,9 +69,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             Ask Aparix anything…{" "}
             <kbd className="float-right text-[10px] text-muted-foreground">⌘K</kbd>
           </button>
-          <span className="text-xs text-muted-foreground">
-            Complexity level {user?.preferences.complexity_level ?? 1}
-          </span>
+          <div className="flex items-center gap-3">
+            <PortfolioSwitcher />
+            <span className="text-xs text-muted-foreground">
+              Complexity level {user?.preferences.complexity_level ?? 1}
+            </span>
+          </div>
         </header>
         <main className="flex-1 bg-background p-6">{children}</main>
       </div>

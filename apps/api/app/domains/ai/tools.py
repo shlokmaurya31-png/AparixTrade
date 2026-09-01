@@ -8,6 +8,7 @@ guardrail against hallucinated financial figures (see docs/ARCHITECTURE.md §7-8
 """
 
 import uuid
+from datetime import date
 from typing import Any, Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ from app.domains.broker import service as broker_service
 from app.domains.events import service as events_service
 from app.domains.macro.service import list_indicators
 from app.domains.market_data.service import get_security_by_symbol, live_market_state
+from app.domains.options import service as options_service
 from app.domains.paper_trading import service as paper_trading_service
 from app.domains.portfolios.service import compute_portfolio_analytics, get_holdings_with_quotes
 from app.domains.risk.service import compute_risk_profile
@@ -189,6 +191,59 @@ async def get_broker_holdings_tool(db: AsyncSession, portfolio: Portfolio, **_: 
     }
 
 
+async def get_options_chain_tool(
+    db: AsyncSession, portfolio: Portfolio, symbol: str = "RELIANCE", expiry: str | None = None, **_: Any
+) -> dict:
+    expiries = options_service.list_expiries()
+    try:
+        target_expiry = date.fromisoformat(expiry) if expiry else expiries[0]
+    except ValueError:
+        target_expiry = expiries[0]
+    try:
+        chain = await options_service.get_chain(db, symbol, target_expiry)
+    except options_service.UnknownSymbolError as exc:
+        return {"error": f"unknown symbol: {exc}"}
+    # A full chain is 17 strikes x 2 types — more than a model needs to
+    # answer a typical question. Truncate to strikes near the money, same
+    # "sensible default, state it" pattern as get_macro_indicators_tool.
+    near_the_money = sorted(chain["contracts"], key=lambda c: abs(c["strike"] - chain["spot"]))[:10]
+    return {
+        **chain,
+        "contracts": near_the_money,
+        "note": "Showing the 10 strikes nearest the money, not the full chain.",
+    }
+
+
+async def price_option_tool(
+    db: AsyncSession,
+    portfolio: Portfolio,
+    symbol: str = "RELIANCE",
+    strike: float | None = None,
+    option_type: str = "call",
+    expiry: str | None = None,
+    **_: Any,
+) -> dict:
+    expiries = options_service.list_expiries()
+    try:
+        target_expiry = date.fromisoformat(expiry) if expiry else expiries[0]
+    except ValueError:
+        target_expiry = expiries[0]
+
+    if strike is None:
+        try:
+            chain = await options_service.get_chain(db, symbol, target_expiry)
+        except options_service.UnknownSymbolError as exc:
+            return {"error": f"unknown symbol: {exc}"}
+        strike = min((c["strike"] for c in chain["contracts"]), key=lambda s: abs(s - chain["spot"]))
+
+    try:
+        return await options_service.price_single_option(
+            db, symbol, strike=strike, expiry=target_expiry, option_type=option_type
+        )
+    except options_service.UnknownSymbolError as exc:
+        return {"error": f"unknown symbol: {exc}"}
+
+
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_portfolio": get_portfolio_tool,
     "get_holdings": get_holdings_tool,
@@ -204,6 +259,8 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "preview_trade": preview_trade_tool,
     "evaluate_order": evaluate_order_tool,
     "get_broker_holdings": get_broker_holdings_tool,
+    "get_options_chain": get_options_chain_tool,
+    "price_option": price_option_tool,
 }
 
 
