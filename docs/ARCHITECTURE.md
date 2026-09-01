@@ -379,6 +379,10 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Real ingestion gated off by default (Tier 1 S4) | `NEWS_PROVIDER=mock` checked in; `=rss` (real, live, opt-in) also activates a periodic background fetch loop | Matches every other provider in this codebase (`AI_PROVIDER`, `BROKER_PROVIDER`, `MACRO_PROVIDER`, `FUNDAMENTALS_PROVIDER`, `CORPORATE_ACTIONS_PROVIDER`) — zero external dependency for a fresh clone, real capability one setting away | A cold fresh clone never contacts RBI's servers unless a developer explicitly opts in |
 | Macro vintage scope (Tier 1 S5) | Real revision/vintage history generated only for `cpi_inflation` and `gdp_growth` — the other 5 seeded indicators (repo rate, 10Y G-Sec, INR/USD, Brent crude, gold) get none | These 5 are continuously market-quoted rates/prices, not periodically-revised government statistics — India's MOSPI genuinely does revise CPI and GDP (advance → provisional → final); fabricating a "revision history" for a live-quoted FX rate would be precision that data doesn't have | `GET /macro/indicators/{code}/history` returns 404 (not an empty fake list) for a non-revised indicator, naming exactly which two codes do have history |
 | `MacroIndicator` left untouched (Tier 1 S5) | New `macro_indicator_releases` table added alongside the existing single-current-value `MacroIndicator` table, not a replacement | Every existing caller (risk-free rate lookups, the AI's `get_macro_indicators` tool, `/home`'s macro card) keeps working unchanged; the vintage table is purely additive | Two tables now answer related but different questions — "what's the reading right now" (`MacroIndicator`) vs. "what would a query dated X have known, including which figures were later revised" (`MacroIndicatorRelease`) |
+| RAG corpus scope (Tier 1 S6) | Indexed corpus is ingested news articles only — no document-upload model, no PDF/filing ingestion, no broader knowledge-graph corpus | News ingestion (S4) is the one genuinely real, not fabricated, document domain this codebase has; inventing a larger synthetic corpus just to make RAG "look" more complete would itself be exactly the kind of fake functionality this project's discipline prohibits | `search_knowledge_base` and the `researcher` AI mode are honest about the limitation — both the tool description and the mode's system-prompt instruction state the corpus is news-only |
+| Embedding provider default (Tier 1 S6) | `EMBEDDING_PROVIDER=hashing` (feature-hashing bag-of-words, zero external dependency) checked in; `=ollama` (real dense embeddings via a locally running `nomic-embed-text`) opt-in | Same "mock/zero-dependency default, real opt-in upgrade" pattern as every other provider in this codebase; unlike most "mock" defaults, hashing is a real algorithm over real ingested text, not fabricated/random — see `domains/rag/embeddings.py` | Weaker than a dense embedding at synonyms/paraphrases (exact shared vocabulary drives the score) — documented directly in the `researcher` mode's system-prompt instruction, not silently assumed to be equivalent |
+| No ANN vector index (Tier 1 S6) | Full-scan cosine similarity over all indexed documents (`domains/rag/analytics.py`), no FAISS/pgvector/etc | Genuinely correct at the current corpus size (tens of rows) — an ANN index would be complexity with no benefit yet, same reasoning as `check_candle_integrity()`'s documented full-table-scan limitation | Explicitly flagged in `domains/rag/analytics.py`'s docstring as real future work before a much larger corpus makes a full scan slow, not silently left unscoped |
+| Guardrail widened to cover failed tool calls (Tier 1 S6) | `_apply_guardrail()` (`domains/ai/ollama_provider.py`) now treats an attempted-and-failed tool call the same as no tool call at all, not just "any tool call was attempted" | Caught live during this session's own verification: a malformed `top_k` argument crashed `search_knowledge_base` twice, and llama3.1 answered anyway with three entirely invented publisher names/titles/scores — the old guardrail didn't flag it because *a* tool call existed, even though none succeeded | `tests/test_ollama_provider.py::test_guardrail_flags_a_response_built_on_only_failed_tool_calls` is a regression test for this exact scenario, not a hypothetical one |
 
 ## 10. Roadmap
 
@@ -767,12 +771,76 @@ scope decision — no existing page naturally hosts it without
 restructuring `/home`); the data is reachable via the API and the AI
 Terminal.
 
+**Session 6 — RAG foundation** (done): real retrieval-augmented search
+over the one genuinely real document corpus this codebase has — ingested
+news articles (Session 4). `domains/rag/embeddings.py::EmbeddingProvider`
+follows the same interface+Mock pattern as every other domain, but the
+checked-in default (`HashingEmbeddingProvider`) is a real algorithm
+(feature hashing / the "hashing trick" — a genuine classical
+information-retrieval technique) run over real ingested text, not random
+noise or fabricated data — it's simply weaker than a dense neural
+embedding at capturing synonyms/paraphrases, and the `researcher` mode's
+system prompt says so directly rather than overselling it. A real local
+model was pulled and used for the opt-in upgrade
+(`ollama pull nomic-embed-text`, verified live: real 768-dim embeddings
+returned from a genuine `POST /api/embeddings` call). `document_embeddings`
+(additive, keyed on `(article_id, model)` so switching providers doesn't
+require deleting prior vectors) is indexed incrementally and idempotently
+(`domains/rag/service.py::reindex_missing()`) — called once at startup
+and again after every real news ingestion run, deliberately not a
+one-time seed, since the same "seed only runs once" gotcha already hit
+three times this session doesn't apply to something designed to run
+indefinitely. `search_knowledge_base` is AI tool #21; the previously
+schema-only `researcher` AI mode (accepted since Session 1's RBAC work
+but backed by nothing — `MODE_INSTRUCTIONS` had no entry for it, so it
+fell back to a generic "not available yet" note) now has a real
+instruction set and a real tool to back it.
+
+Two real bugs were caught and fixed during live verification, not shipped:
+(1) Ollama handed back `top_k` as the string `"5"` instead of an int,
+crashing a list slice in `retrieve()` — fixed by coercing defensively in
+`search_knowledge_base_tool`, the same category of local-model
+argument-type unreliability already documented in §11, but this instance
+crashed instead of just resolving to a wrong value. (2) More seriously:
+after that crash, llama3.1 answered the user's question anyway with three
+entirely invented publisher names, article titles, and similarity scores
+formatted exactly like real tool output — and `_apply_guardrail()` didn't
+flag it, because the old version only checked whether *any* tool call was
+attempted, not whether one actually succeeded. Fixed by treating an
+attempted-and-failed tool call the same as no tool call at all (see §9);
+a regression test (`test_guardrail_flags_a_response_built_on_only_failed_tool_calls`)
+reproduces the exact scenario. A closely related, narrower issue was
+observed and addressed by tightening the `researcher` system-prompt
+instruction rather than by a structural code change: given a genuinely
+empty (not failed) tool result, the model initially said "I will provide
+a generic answer based on general knowledge" and fabricated two citations
+anyway — the instruction was strengthened to explicitly forbid inventing
+a publisher/title/quote and to require saying plainly when nothing
+relevant is in the corpus; re-verified live and the model then declined
+honestly. A separate, still-unresolved instance was also observed live:
+given a query where retrieval genuinely found the right document (a
+0.53 cosine-similarity match, clearly the correct article), the model
+still said "I couldn't find any specific information" — a real synthesis
+weakness in a locally-run 8B-class model reading its own tool output, not
+a fabrication (it under-used real evidence rather than inventing false
+evidence), and — consistent with this session's established precedent for
+this category of finding — not chased with further prompt engineering,
+since the structural "never fabricate" guarantee is what actually
+matters and it held. No new frontend surface was added — the existing AI
+Terminal's generic tool-call viewer (`AparixAIMessage.tsx`) already
+renders any tool's real result, `search_knowledge_base` included, and
+`/ai/config`'s `supported_modes` list already drives which mode buttons
+are enabled, so `researcher` became a genuinely clickable, functional
+mode with zero frontend code changes.
+
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
-`docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): real
-document domains (RAG), macro vintage/revision tracking for the 5
-market-quoted indicators that have no real-world revision concept
-(repo rate, 10Y G-Sec yield, INR/USD, crude oil, gold — see §9),
-retroactively adjusting the live seeded candle history for corporate
+`docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): a
+document-upload/PDF/filing corpus beyond ingested news articles, an ANN
+vector index (ok at the current corpus size — see §9), macro
+vintage/revision tracking for the 5 market-quoted indicators that have no
+real-world revision concept (repo rate, 10Y G-Sec yield, INR/USD, crude
+oil, gold — see §9), retroactively adjusting the live seeded candle
+history for corporate
 actions, survivorship-bias/point-in-time security universe (delisted/
 renamed/merged securities), restatement tracking (every fundamentals
 statement is `is_restated=False`), real data providers for fundamentals/

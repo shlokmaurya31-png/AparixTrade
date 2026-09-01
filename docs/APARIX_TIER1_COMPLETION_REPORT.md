@@ -1,11 +1,11 @@
-# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–5)
+# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–6)
 
 Written against `docs/APARIX_TIER1_AUDIT.md` (the pre-implementation
 audit) and the Tier 1 infrastructure request's own 64 sections. Honest
 percentages, not aspirational ones — see §61's own instruction not to
-claim 100% unless something genuinely is. Updated after Session 5 (macro
-time-series/vintage tracking); Sessions 1–4 content below is otherwise
-unchanged from when it was first written.
+claim 100% unless something genuinely is. Updated after Session 6 (RAG
+foundation); Sessions 1–5 content below is otherwise unchanged from when
+it was first written.
 
 ## What "Session 1" means
 
@@ -188,6 +188,47 @@ No frontend surface was added this session — a deliberate scope decision
 (no existing page naturally hosts it without restructuring `/home`); the
 data is reachable via the API and the AI Terminal.
 
+## Session 6: RAG foundation
+
+Real retrieval over the one genuinely real document corpus this codebase
+has — ingested news articles (Session 4). Deliberately not a larger,
+invented corpus (see Architecture decisions):
+
+| Item | Where | Verification |
+|---|---|---|
+| `EmbeddingProvider` + `HashingEmbeddingProvider` + real `OllamaEmbeddingProvider` | `domains/rag/embeddings.py` | `tests/test_rag_embeddings.py` (10 tests) — deterministic, unit-normalized, real shared-vocabulary discrimination (a related text scores higher than an unrelated one); real 768-dim embeddings confirmed live against a locally pulled `nomic-embed-text` (`ollama pull nomic-embed-text`, verified via a direct `POST /api/embeddings` call before writing any code around it) |
+| `document_embeddings` table (additive, keyed on `(article_id, model)`) | `models/document_embedding.py` | Generated against an empty DB, applied live to the real local dev DB — 2 rows indexed, 32 users unaffected |
+| Incremental/idempotent indexing | `domains/rag/service.py::reindex_missing()` | Runs at startup and after every real news ingestion cycle, not a one-time seed — deliberately avoids the "seed only runs once" gotcha this session already hit three times elsewhere |
+| Real semantic search (cosine similarity, full-scan) | `domains/rag/service.py::retrieve()`, `domains/rag/analytics.py` | `tests/test_rag.py` (12 tests) — a relevant article ranks first, an unrelated one scores near zero; live-verified: `GET /rag/search?query=digital+rupee+pilot` against the running server returned the correct article at score 0.57 vs. 0.0 for the unrelated one |
+| `GET /rag/search`, `POST /rag/reindex` (admin) | `domains/rag/router.py` | HTTP tests + live curl verification |
+| AI tool `search_knowledge_base` (#21) | `domains/ai/tools.py`, both providers | `test_ai_chat_knowledge_base_intent`; the previously schema-only `researcher` AI mode now has a real `MODE_INSTRUCTIONS` entry and a real tool to back it — live-verified via Ollama, including in a real browser (Researcher mode button, previously permanently disabled, is now clickable and produces a real cited answer with an expandable real data-source panel) |
+
+Test count (end of Session 6): **257 passing** (+25 over Session 5's 232;
+0 regressions).
+
+**Two real bugs caught and fixed during live verification, not shipped:**
+(1) Ollama handed back the `top_k` argument as the string `"5"` instead
+of an int, crashing a list slice inside `retrieve()` — fixed by coercing
+defensively in `search_knowledge_base_tool`. (2) More seriously: after
+that crash, llama3.1 answered the user's question anyway with three
+entirely invented publisher names, article titles, and similarity scores
+formatted exactly like real tool output, and the existing hallucination
+guardrail (`_apply_guardrail()`) didn't flag it — it only checked whether
+*any* tool call was attempted, not whether one actually succeeded. Fixed
+by treating an attempted-and-failed tool call the same as no tool call at
+all; `tests/test_ollama_provider.py::test_guardrail_flags_a_response_built_on_only_failed_tool_calls`
+reproduces the exact scenario as a permanent regression test. A related,
+narrower case — the model saying "I will provide a generic answer based
+on general knowledge" and fabricating citations after a genuinely empty
+(not failed) tool result — was addressed by tightening the `researcher`
+mode's system-prompt instruction rather than a structural code change,
+and re-verified live to work; a separate case of the model *under-using*
+correctly-retrieved real evidence (declining to answer even when the
+right document scored 0.53) was observed, does not involve any
+fabrication, and — consistent with this session's established precedent
+for this category of finding — was documented as a known local-model
+limitation rather than chased with further prompt engineering.
+
 ## Partially implemented
 
 - **Provenance** only covers 2 of the many data shapes this app serves
@@ -235,8 +276,11 @@ data is reachable via the API and the AI Terminal.
   single-target `Event` (Session 4); it doesn't extract entities or
   propagate through a graph.
 - Financial knowledge graph (entities + typed relationships), and its API.
-- Document intelligence / RAG (no document model, no embeddings, no
-  vector store — the `researcher` AI mode still honestly declines).
+- ~~Document intelligence / RAG~~ — **done in Session 6** for the ingested
+  news corpus (real embeddings, real cosine-similarity retrieval, a real
+  `researcher` mode), see above. Still missing: a document-upload/PDF/
+  filing corpus beyond news articles, and an ANN vector index (correctly
+  unnecessary at the current corpus size — see Architecture decisions).
 - Historical analogue engine.
 - Portfolio exposure beyond sector (company/industry/geographic/commodity/
   factor).
@@ -306,6 +350,19 @@ data is reachable via the API and the AI Terminal.
   universe** (Session 3) for the same reason — a `delisting` action against
   a security someone's mock portfolio already holds would break existing
   flows. They're supported and tested as types, just not exercised live.
+- **The RAG corpus was scoped to ingested news articles only** (Session 6),
+  not a larger invented corpus, for the same reason `FundamentalsProvider`/
+  `NewsProvider` weren't built until real data existed behind them
+  (Session 1's decision, above) — news ingestion (Session 4) is the only
+  document domain in this codebase that's genuinely real rather than
+  fabricated, so it's the only one RAG was built against.
+- **The hallucination guardrail (`_apply_guardrail()`) was widened, not
+  rewritten** (Session 6): it now treats a failed tool call the same as no
+  tool call, but still doesn't attempt full fabrication detection (e.g. an
+  invented citation after a genuinely *empty*, successful tool result) —
+  that narrower case was addressed via a prompt-instruction change instead,
+  consistent with the project's existing "best-effort, not exhaustive"
+  guardrail philosophy (see `docs/ARCHITECTURE.md` Phase 3.5 trade-offs).
 
 ## Data sources (see `docs/DATA_LICENSING.md` for the full table)
 
@@ -348,23 +405,34 @@ external data source and changed no licensing posture.
   already-documented local-model tool-argument unreliability (see
   `docs/ARCHITECTURE.md` §11); not chased with more prompt engineering
   since the structural guardrail is what actually matters here.
+- Observed live during Session 6 verification: `llama3.1`, given a query
+  where `search_knowledge_base` genuinely retrieved the correct document
+  (a 0.53 cosine-similarity match, clearly the right article), still
+  responded "I couldn't find any specific information" — a real synthesis
+  weakness reading its own tool output correctly, not a fabrication (it
+  under-used real evidence rather than inventing false evidence). Not
+  chased further for the same reason as the item above.
+- A more serious instance, fixed rather than just documented: a malformed
+  `top_k` argument crashed `search_knowledge_base` twice, and the model
+  then fabricated three entirely invented citations. This one *was* a real
+  structural guardrail gap (not just a model-reasoning quirk) and was
+  fixed — see Session 6, above, and `docs/ARCHITECTURE.md` §9.
 
 ## Next recommended features
 
 In rough dependency order, matching what actually unblocks the most:
 
-1. **RAG foundation** — now genuinely unblocked (a real LLM exists since
-   Phase 3.5, and Session 4's ingested news articles are a real, live
-   document corpus to index) but still needs a vector-store/embedding
-   decision before the pipeline is worth building.
-2. **RBAC role-management UI + audit trail** — the natural follow-up to
+1. **RBAC role-management UI + audit trail** — the natural follow-up to
    Session 1's backend-only RBAC landing.
-3. **Survivorship-bias / point-in-time security universe** — a real,
+2. **Survivorship-bias / point-in-time security universe** — a real,
    separate effort (delisted/renamed/merged securities entering/leaving a
    historical query), now that Session 3 has the underlying corporate
    action types defined; still needs a way to seed it that doesn't
    disrupt the live tradable universe (e.g. a dedicated set of
    "historical only" securities never offered for trading).
+3. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
+   beyond news articles, now that Session 6 has a real embedding+retrieval
+   foundation to extend rather than build from scratch.
 
 ## Production readiness score
 
@@ -376,26 +444,31 @@ for:
 
 | Area | Readiness | Why |
 |---|---|---|
-| Core architecture (domain structure, provider pattern, testing discipline) | **~83%** | Genuinely solid — real migrations, RBAC, four independent real point-in-time query engines, and a real (if narrow) external-data ingestion pipeline; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
+| Core architecture (domain structure, provider pattern, testing discipline) | **~84%** | Genuinely solid — real migrations, RBAC, four independent real point-in-time query engines, a real (if narrow) external-data ingestion pipeline, and a real embedding/retrieval layer; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
 | Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~63%** | Point-in-time enforcement now exists for three data domains (fundamentals, corporate actions, macro vintage) plus news's real-vs-classified distinction, each with a regression test proving no future-data leak — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, and macro's point-in-time discipline covers 2 of 7 indicators (correctly — the other 5 have no revision concept to enforce) |
 | Actual financial data (market/fundamentals/macro/news/corporate actions) | **~25%** | Macro now has real revision/vintage history for the 2 indicators that genuinely have one, alongside fundamentals/corporate-actions' real point-in-time engines and news's one real external source (gated off by default). Still entirely synthetic underneath: no real market-data, fundamentals, or macro vendor integration |
-| Knowledge graph / event intelligence / RAG | **~5%** | News ingestion creates real single-target events (a narrow slice of "event intelligence"); no entity extraction, no propagation graph, no knowledge graph, no RAG yet |
+| Knowledge graph / event intelligence / RAG | **~15%** | News ingestion creates real single-target events (a narrow slice of "event intelligence"); RAG now has a real embedding+retrieval foundation over the real news corpus (Session 6) — still no entity extraction, no propagation graph, no knowledge graph, and the RAG corpus is one document domain, not the broader knowledge base the full spec describes |
 | Security (RBAC, encryption, rate limiting, audit) | **~35%** | RBAC and credential encryption are real; rate limiting, request IDs, and error sanitization are entirely absent |
 | Regulatory posture | **~50%** | The education/analytics/advisory/execution boundary is genuinely maintained in product copy and this doc set — but that discipline has never been reviewed by an actual compliance professional, which the request itself says is required before anything resembling real advice or execution ships |
 
-**Overall: five sessions in, the foundation is meaningfully stronger
+**Overall: six sessions in, the foundation is meaningfully stronger
 (schema-drift risk fixed, real RBAC, a real provenance/quality seam, four
 independent point-in-time query engines each proven against an actual
 leak scenario, a real external news pipeline verified against a live
-government feed, and — new this session — real macro revision/vintage
-history for the two indicators that genuinely have one) without adding a
-single line of fake functionality. A real plausibility bug (P/E ~1667)
-was caught and fixed during live verification in Session 2; a real
-duplicate-event bug was caught and fixed in Session 4; Session 5 caught
-the same "seed only runs once" gotcha a third time and, separately, a
-test that was asserting something unrealistic rather than something
-wrong, in each case fixing the actual issue and re-verifying live rather
-than papering over it. But "Aparix, the financial intelligence operating
-system for India" is still, honestly, mostly ahead of this codebase, not
-behind it — the knowledge graph and RAG are still essentially
-unstarted.**
+government feed, real macro revision/vintage history for the two
+indicators that genuinely have one, and — new this session — a real
+embedding/retrieval layer with a genuinely functional `researcher` AI
+mode) without adding a single line of fake functionality. A real
+plausibility bug (P/E ~1667) was caught and fixed during live
+verification in Session 2; a real duplicate-event bug was caught and
+fixed in Session 4; Session 5 caught the same "seed only runs once"
+gotcha a third time and, separately, a test that was asserting something
+unrealistic rather than something wrong; Session 6 caught a real
+tool-argument crash and, more importantly, a real gap in the
+hallucination guardrail itself (a failed tool call wasn't being treated
+as ungrounded) — caught by actually watching the local model fabricate
+citations live, not by inspection, and fixed the same day. But "Aparix,
+the financial intelligence operating system for India" is still,
+honestly, mostly ahead of this codebase, not behind it — the knowledge
+graph is still essentially unstarted, and RAG covers exactly one document
+domain.**

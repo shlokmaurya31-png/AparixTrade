@@ -5,9 +5,11 @@ every phase on the original roadmap, scoped** (see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and the
 trade-offs behind every scoping decision), **plus Tier 1 infrastructure**
 (data provenance, quality checks, RBAC, real Alembic migrations, a
-point-in-time fundamentals + corporate-actions + macro-vintage engine, and
-a real news ingestion pipeline that can genuinely fetch and classify a
-live RSS feed — see
+point-in-time fundamentals + corporate-actions + macro-vintage engine, a
+real news ingestion pipeline that can genuinely fetch and classify a
+live RSS feed, and a real RAG foundation — genuine embeddings and
+cosine-similarity retrieval over the ingested news corpus, backing a
+functional "Researcher" AI mode — see
 [`docs/APARIX_TIER1_COMPLETION_REPORT.md`](docs/APARIX_TIER1_COMPLETION_REPORT.md)
 for an honest breakdown of what's real vs. still missing): auth, an
 adaptive dashboard, a portfolio engine, mock Indian market data, a risk &
@@ -37,8 +39,9 @@ aggregate "all my portfolios" view), and an AI Terminal that actually
 understands free-form questions — a real local LLM (Ollama, `llama3.1`)
 calling the same tool registry every number in this app already traces
 back to, including a pre-trade preview, a post-trade entry-quality coach,
-real broker holdings, options Greeks, and fundamentals/ratios, never
-inventing a figure.
+real broker holdings, options Greeks, fundamentals/ratios, and — via the
+"Researcher" mode — real semantic search over ingested news articles with
+real citations, never inventing a figure or a source.
 
 Everything here runs locally with **no paid APIs, no Docker, and no external
 accounts** — SQLite for the database, a seeded synthetic market for prices,
@@ -135,10 +138,22 @@ judged market-moving. See `docs/DATA_LICENSING.md` for why RBI's feed was
 chosen over Google News' (whose own terms forbid this use) and the
 licensing caveats that still apply.
 
+**To turn on real dense embeddings for RAG** (optional — the default
+`EMBEDDING_PROVIDER=hashing` is a real but simple bag-of-words match, zero
+external dependency): run `ollama pull nomic-embed-text` (a separate model
+from the chat model `OLLAMA_MODEL` points at), set
+`EMBEDDING_PROVIDER=ollama` in `apps/api/.env`, and restart the API — this
+also requires deleting `apps/api/aparix_dev.db`'s `document_embeddings`
+rows or calling `POST /api/v1/rag/reindex` (admin) once, since a document
+already indexed under one provider isn't automatically re-embedded for
+another. Try the "Researcher" mode in the AI Terminal either way — it
+works with the default hashing provider too, just with weaker
+synonym/paraphrase matching.
+
 ## Test
 
 ```bash
-cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + macro vintage + admin + paper trading + broker + options + fundamentals + corporate actions + news ingestion + point-in-time + AI-provider fixtures/flows
+cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + macro vintage + admin + paper trading + broker + options + fundamentals + corporate actions + news ingestion + RAG/embeddings + point-in-time + AI-provider fixtures/flows
 npm run build -w web                # production build + strict TS check
 npm run lint -w web
 ```
