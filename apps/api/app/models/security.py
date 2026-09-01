@@ -22,6 +22,17 @@ class Security(Base, UUIDPrimaryKeyMixin):
     is_index: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_mock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Instrument master fields (Tier 1) — nullable, unpopulated for the
+    # existing seeded universe (no ISIN/lot-size data exists for mock
+    # securities). Present so a real NSE/BSE/MCX-backed provider has
+    # somewhere real to write to later, not a speculative guess at what
+    # that provider's shape will be — see docs/APARIX_TIER1_AUDIT.md.
+    isin: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    segment: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "equity" | "index" | "derivative"
+    asset_class: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "equity" | "commodity" | "currency"
+    lot_size: Mapped[int | None] = mapped_column(nullable=True)
+    tick_size: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+
 
 class Candle(Base, UUIDPrimaryKeyMixin):
     """Daily OHLCV. Phase 1 data is entirely synthetic (seeded random walk),

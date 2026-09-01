@@ -20,3 +20,14 @@ class MacroIndicator(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     value: Mapped[float] = mapped_column(Float, nullable=False)
     unit: Mapped[str] = mapped_column(String(20), nullable=False)
     is_mock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    @property
+    def provenance(self):  # -> app.core.provenance.Provenance
+        """Not a stored column — computed from `updated_at`
+        (TimestampMixin) so schemas/macro.py::MacroIndicatorOut can
+        serialize it via from_attributes, same pattern as
+        User.is_admin (models/user.py)."""
+        from app.core.provenance import macro_provenance
+        from app.domains.macro.provider import MockMacroDataProvider
+
+        return macro_provenance(provider_name=MockMacroDataProvider.name, updated_at=self.updated_at)

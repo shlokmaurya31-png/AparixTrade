@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 
+from app.core.provenance import Provenance
+
 
 class MacroIndicatorOut(BaseModel):
     code: str
@@ -7,5 +9,6 @@ class MacroIndicatorOut(BaseModel):
     value: float
     unit: str
     is_mock: bool = True
+    provenance: Provenance
 
     model_config = {"from_attributes": True}

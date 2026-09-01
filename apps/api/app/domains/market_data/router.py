@@ -2,10 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.core.provenance import quote_provenance
 from app.domains.market_data import service
 from app.schemas.market_data import CandleOut, QuoteOut, SecurityOut
 
 router = APIRouter(prefix="/market", tags=["market"])
+
+
+def _with_provenance(quote: dict) -> dict:
+    return {**quote, "provenance": quote_provenance(provider_name=service.provider.__class__.__name__, as_of=quote["as_of"])}
 
 
 @router.get("/securities", response_model=list[SecurityOut])
@@ -18,12 +23,12 @@ async def get_quote(symbol: str) -> dict:
     quote = service.live_market_state.get_quote(symbol.upper())
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown symbol")
-    return quote
+    return _with_provenance(quote)
 
 
 @router.get("/quotes", response_model=list[QuoteOut])
 async def get_all_quotes() -> list[dict]:
-    return service.live_market_state.all_quotes()
+    return [_with_provenance(q) for q in service.live_market_state.all_quotes()]
 
 
 @router.get("/candles/{symbol}", response_model=list[CandleOut])
