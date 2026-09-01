@@ -17,6 +17,7 @@ from app.domains.broker import service as broker_service
 from app.domains.corporate_actions import service as corporate_actions_service
 from app.domains.events import service as events_service
 from app.domains.fundamentals import service as fundamentals_service
+from app.domains.knowledge_graph import service as knowledge_graph_service
 from app.domains.macro import service as macro_service
 from app.domains.macro.service import list_indicators
 from app.domains.market_data.service import get_security_by_symbol, live_market_state
@@ -405,6 +406,19 @@ async def search_knowledge_base_tool(
     return {"query": query, "results": results}
 
 
+async def get_graph_exposure_tool(db: AsyncSession, portfolio: Portfolio, target: str = "", **_: Any) -> dict:
+    if not target:
+        return {"error": "No location or commodity given."}
+    resolved = await knowledge_graph_service.resolve_graph_exposure(db, target)
+    if resolved is None:
+        return {
+            "error": f"{target!r} doesn't match any known location or commodity in the knowledge graph.",
+            "note": "The knowledge graph only covers a small, hand-curated set of real facts about the "
+            "seeded securities — not every location or commodity.",
+        }
+    return resolved
+
+
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_portfolio": get_portfolio_tool,
     "get_holdings": get_holdings_tool,
@@ -427,6 +441,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_corporate_actions": get_corporate_actions_tool,
     "search_news": search_news_tool,
     "search_knowledge_base": search_knowledge_base_tool,
+    "get_graph_exposure": get_graph_exposure_tool,
 }
 
 

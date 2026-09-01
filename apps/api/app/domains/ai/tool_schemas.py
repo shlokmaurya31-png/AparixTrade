@@ -355,6 +355,27 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_graph_exposure",
+            "description": (
+                "Look up which seeded securities have a real, documented exposure to a location "
+                "(e.g. 'Gujarat', 'Maharashtra') or commodity (e.g. 'crude_oil', 'coal', 'steel', "
+                "'palm_oil') via the financial knowledge graph — a headquarters/major-facility link for "
+                "a location, or a consumption-side dependency for a commodity. This is the same "
+                "resolution used internally when an event or stress test targets a location/commodity "
+                "instead of a specific symbol/sector."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "A location or commodity name to look up."},
+                },
+                "required": ["target"],
+            },
+        },
+    },
 ]
 
 _SCHEMA_NAMES = {schema["function"]["name"] for schema in TOOL_SCHEMAS}

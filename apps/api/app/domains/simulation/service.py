@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.audit.service import log_action
+from app.domains.knowledge_graph.service import exposure_multipliers, resolve_graph_exposure
 from app.domains.market_data.service import get_candles
 from app.domains.risk.service import get_risk_free_rate_annual
 from app.domains.portfolios.service import (
@@ -68,7 +69,14 @@ async def run_stress_test(db: AsyncSession, portfolio: Portfolio, *, target: str
         HoldingRow(symbol=r["security"].symbol, sector=r["security"].sector, market_value=r["metrics"].market_value)
         for r in rows
     ]
-    return apply_shock(holding_rows, target=target.upper(), shock_pct=shock_pct, beta_by_symbol=beta_lookup)
+    # A user can stress-test a real location/commodity name (e.g. "Gujarat",
+    # "crude_oil"), not just a symbol/sector/NIFTY50 — same knowledge-graph
+    # resolution the event-impact engine uses (domains/events/service.py).
+    resolved = await resolve_graph_exposure(db, target)
+    return apply_shock(
+        holding_rows, target=target.upper(), shock_pct=shock_pct, beta_by_symbol=beta_lookup,
+        graph_exposure=exposure_multipliers(resolved),
+    )
 
 
 async def run_backtest(

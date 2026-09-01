@@ -85,6 +85,45 @@ def test_stress_test_defaults_beta_to_one_when_unknown():
     assert result["per_holding_impact"][0]["shock_applied_pct"] == pytest.approx(-8.0)
 
 
+def test_stress_test_graph_exposure_applies_decayed_pass_through():
+    rows = [
+        HoldingRow(symbol="RELIANCE", sector="Energy", market_value=10_000),
+        HoldingRow(symbol="TCS", sector="Information Technology", market_value=10_000),
+    ]
+    result = apply_shock(
+        rows, target="Gujarat", shock_pct=-15, beta_by_symbol={}, graph_exposure={"RELIANCE": 0.4}
+    )
+    reliance_impact = next(r for r in result["per_holding_impact"] if r["symbol"] == "RELIANCE")
+    tcs_impact = next(r for r in result["per_holding_impact"] if r["symbol"] == "TCS")
+
+    # -15% * 0.4 pass-through = -6% applied, not the full -15%
+    assert reliance_impact["shock_applied_pct"] == pytest.approx(-6.0)
+    assert reliance_impact["basis"].startswith("indirect via knowledge graph")
+    assert tcs_impact["shock_applied_pct"] == pytest.approx(0.0)
+    assert tcs_impact["basis"] == "unaffected"
+
+
+def test_stress_test_direct_symbol_match_takes_priority_over_graph_exposure():
+    """A holding that's both the direct target AND graph-exposed (shouldn't
+    happen in practice, but the direct/sector/benchmark checks run first in
+    apply_shock's if/elif chain) gets the full direct shock, not the
+    decayed one."""
+    rows = [HoldingRow(symbol="RELIANCE", sector="Energy", market_value=10_000)]
+    result = apply_shock(
+        rows, target="RELIANCE", shock_pct=-15, beta_by_symbol={}, graph_exposure={"RELIANCE": 0.4}
+    )
+    assert result["per_holding_impact"][0]["shock_applied_pct"] == pytest.approx(-15.0)
+    assert result["per_holding_impact"][0]["basis"] == "direct"
+
+
+def test_stress_test_empty_graph_exposure_behaves_exactly_like_before():
+    rows = [HoldingRow(symbol="TCS", sector="Information Technology", market_value=10_000)]
+    with_none = apply_shock(rows, target="Gujarat", shock_pct=-15, beta_by_symbol={})
+    with_empty = apply_shock(rows, target="Gujarat", shock_pct=-15, beta_by_symbol={}, graph_exposure={})
+    assert with_none == with_empty
+    assert with_none["per_holding_impact"][0]["basis"] == "unaffected"
+
+
 # ── Backtest ─────────────────────────────────────────────────────────────
 
 

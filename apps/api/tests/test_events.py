@@ -75,12 +75,13 @@ async def test_events_are_seeded_and_reachable(client: AsyncClient):
     response = await client.get("/api/v1/events")
     assert response.status_code == 200
     events = response.json()
-    # 10 hand-seeded SEED_EVENTS + 1 real event created by news ingestion's
-    # classifier from MockNewsProvider's "digital rupee pilot" mock article
-    # (domains/news/service.py::ingest_once, seeded once at startup like
-    # every other domain) — a genuine second source of events now, not a
-    # duplicate or a magic number.
-    assert len(events) == 11
+    # 12 hand-seeded SEED_EVENTS (10 original + 2 added for Tier 1
+    # knowledge-graph propagation demonstrations) + 1 real event created by
+    # news ingestion's classifier from MockNewsProvider's "digital rupee
+    # pilot" mock article (domains/news/service.py::ingest_once, seeded
+    # once at startup like every other domain) — a genuine second source
+    # of events now, not a duplicate or a magic number.
+    assert len(events) == 13
     jamnagar = next(e for e in events if "Jamnagar" in e["headline"])
     assert jamnagar["primary_target"] == "RELIANCE"
     assert jamnagar["severity"] == "high"

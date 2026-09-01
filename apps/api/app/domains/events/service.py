@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.events.impact import compute_event_impact
 from app.domains.events.seed_data import SEED_EVENTS
+from app.domains.knowledge_graph.service import exposure_multipliers, resolve_graph_exposure
 from app.domains.portfolios.service import compute_beta_by_symbol, get_holdings_with_quotes
 from app.domains.simulation.stress_test import HoldingRow
 from app.models.event import Event
@@ -71,4 +72,10 @@ async def compute_impact_for_portfolio(db: AsyncSession, event: Event, portfolio
         HoldingRow(symbol=r["security"].symbol, sector=r["security"].sector, market_value=r["metrics"].market_value)
         for r in rows
     ]
-    return compute_event_impact(event, holding_rows, beta_lookup)
+    # A location/commodity primary_target (Tier 1 — knowledge-graph
+    # propagation) resolves to real indirectly-exposed holdings here;
+    # None for an ordinary direct symbol/sector/NIFTY50 target, in which
+    # case exposure_multipliers() returns {} and apply_shock()'s existing
+    # behavior is completely unchanged.
+    resolved = await resolve_graph_exposure(db, event.primary_target)
+    return compute_event_impact(event, holding_rows, beta_lookup, exposure_multipliers(resolved))

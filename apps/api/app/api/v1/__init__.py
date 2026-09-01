@@ -7,6 +7,7 @@ from app.domains.broker.router import router as broker_router
 from app.domains.corporate_actions.router import router as corporate_actions_router
 from app.domains.events.router import router as events_router
 from app.domains.fundamentals.router import router as fundamentals_router
+from app.domains.knowledge_graph.router import router as knowledge_graph_router
 from app.domains.macro.router import router as macro_router
 from app.domains.market_data.router import router as market_router
 from app.domains.news.router import router as news_router
@@ -33,6 +34,7 @@ api_v1_router.include_router(broker_router)
 api_v1_router.include_router(options_router)
 api_v1_router.include_router(fundamentals_router)
 api_v1_router.include_router(corporate_actions_router)
+api_v1_router.include_router(knowledge_graph_router)
 api_v1_router.include_router(news_router)
 api_v1_router.include_router(rag_router)
 api_v1_router.include_router(ai_router)

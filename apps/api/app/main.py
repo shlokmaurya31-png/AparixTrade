@@ -16,6 +16,7 @@ from app.core.rate_limit import FixedWindowRateLimiter
 from app.domains.corporate_actions.service import seed_if_needed as seed_corporate_actions_if_needed
 from app.domains.events.service import seed_if_needed as seed_events_if_needed
 from app.domains.fundamentals.service import seed_if_needed as seed_fundamentals_if_needed
+from app.domains.knowledge_graph.service import seed_if_needed as seed_knowledge_graph_if_needed
 from app.domains.macro.service import (
     seed_if_needed as seed_macro_if_needed,
     seed_vintage_if_needed as seed_macro_vintage_if_needed,
@@ -40,6 +41,10 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await seed_market_if_needed(db)
         await live_market_state.init_from_db(db)
+        # Depends on the seeded securities existing (looks each up by
+        # symbol) — after seed_market_if_needed, otherwise independent of
+        # every other domain's own seeding.
+        await seed_knowledge_graph_if_needed(db)
         await seed_macro_if_needed(db)
         await seed_macro_vintage_if_needed(db)
         await seed_events_if_needed(db)

@@ -137,4 +137,34 @@ SEED_EVENTS: list[tuple[str, str, str, str, str, str, list[str], str, int]] = [
         "Global",
         12,
     ),
+    # The next two demonstrate real knowledge-graph event propagation
+    # (Tier 1 — see domains/knowledge_graph/) — primary_target is a real
+    # location/commodity name, not a symbol/sector, so the impact
+    # calculation resolves it through the graph to every seeded security
+    # with a real, documented exposure, at a disclosed decayed pass-
+    # through, rather than requiring one hand-picked direct target.
+    (
+        "Cyclone warning issued for Gujarat coast, ports and plants on alert",
+        "The India Meteorological Department has issued a cyclone warning for the Gujarat coastline; "
+        "port operators and industrial facilities in the region are activating contingency plans.",
+        "natural_disaster",
+        "medium",
+        "negative",
+        "Gujarat",
+        ["Gujarat", "Ports", "Weather"],
+        "Gujarat, India",
+        9,
+    ),
+    (
+        "Coal supply disruptions weigh on thermal power generation capacity",
+        "Logistics constraints at major coal mines have slowed deliveries to thermal power plants, "
+        "raising near-term concerns about generation capacity utilization.",
+        "supply_chain",
+        "medium",
+        "negative",
+        "coal",
+        ["Coal", "Power generation", "Supply chain"],
+        "India",
+        11,
+    ),
 ]

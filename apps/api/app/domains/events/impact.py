@@ -19,9 +19,16 @@ def event_shock_pct(event: Event) -> float:
     return SEVERITY_MAGNITUDE_PCT[event.severity] * DIRECTION_SIGN[event.direction]
 
 
-def compute_event_impact(event: Event, rows: list[HoldingRow], beta_by_symbol: dict[str, float]) -> dict:
+def compute_event_impact(
+    event: Event,
+    rows: list[HoldingRow],
+    beta_by_symbol: dict[str, float],
+    graph_exposure: dict[str, float] | None = None,
+) -> dict:
     shock_pct = event_shock_pct(event)
-    result = apply_shock(rows, target=event.primary_target, shock_pct=shock_pct, beta_by_symbol=beta_by_symbol)
+    result = apply_shock(
+        rows, target=event.primary_target, shock_pct=shock_pct, beta_by_symbol=beta_by_symbol, graph_exposure=graph_exposure
+    )
     result["event_id"] = str(event.id)
     result["headline"] = event.headline
     result["severity"] = event.severity

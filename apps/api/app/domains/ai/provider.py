@@ -97,6 +97,16 @@ class MockModelProvider(ModelProvider):
             data = await use("search_knowledge_base", query=query or message, top_k=3)
             text = self._knowledge_base_text(data, mode)
 
+        elif any(k in lowered for k in ["exposed to", "exposure to", "affected by", "knowledge graph"]):
+            target = None
+            for kw in ["exposed to", "exposure to", "affected by"]:
+                idx = lowered.find(kw)
+                if idx != -1:
+                    target = message[idx + len(kw) :].strip().rstrip("?.!") or None
+                    break
+            data = await use("get_graph_exposure", target=target or "")
+            text = self._graph_exposure_text(data, mode)
+
         elif any(k in lowered for k in ["news", "event", "what's happening", "whats happening", "headlines", "market moving"]):
             data = await use("get_events")
             text = self._events_text(data["events"], mode)
@@ -482,6 +492,18 @@ class MockModelProvider(ModelProvider):
         return (
             f"Most recent: \"{top['title']}\" ({top['publisher']}, {top['published_at']}). "
             f"{len(articles)} article(s) found{mock_note}. [DEMO DATA]"
+        )
+
+    @staticmethod
+    def _graph_exposure_text(data: dict, mode: str) -> str:
+        if "error" in data:
+            return f"{data['error']} [DEMO DATA]"
+        affected = data["affected"]
+        symbols = ", ".join(f"{a['symbol']} ({a['relationship']})" for a in affected)
+        return (
+            f"{data['name']} ({data['kind']}): {len(affected)} seeded securities have a real, documented "
+            f"exposure — {symbols}. Estimated pass-through: {data['pass_through_pct']:.0f}% of the event's "
+            f"shock magnitude. [DEMO DATA]"
         )
 
     @staticmethod
