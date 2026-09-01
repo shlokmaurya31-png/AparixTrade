@@ -5,7 +5,8 @@ import { useState } from "react";
 
 import { AparixBadge, DemoDataBadge } from "@/components/aparix/AparixBadge";
 import { AparixCard } from "@/components/aparix/AparixCard";
-import { api, ApiError, type AparixEvent, type EventImpact } from "@/lib/api";
+import { AparixTable } from "@/components/aparix/AparixTable";
+import { api, ApiError, type AparixEvent, type EventImpact, type NewsArticle } from "@/lib/api";
 import { usePrimaryPortfolio } from "@/lib/use-portfolio";
 
 const SEVERITY_TONE = { low: "neutral", medium: "warning", high: "negative" } as const;
@@ -27,6 +28,7 @@ function relativeTime(iso: string): string {
 export default function EventsPage() {
   const { portfolio } = usePrimaryPortfolio();
   const events = useQuery({ queryKey: ["events"], queryFn: api.events.list });
+  const news = useQuery({ queryKey: ["news"], queryFn: api.news.list });
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [impact, setImpact] = useState<EventImpact | null>(null);
@@ -58,7 +60,8 @@ export default function EventsPage() {
         <div>
           <h1 className="text-lg font-semibold">Market Events</h1>
           <p className="text-xs text-muted-foreground">
-            Seeded illustrative events, not a live news feed — see an event&rsquo;s impact on your portfolio below.
+            Mostly seeded illustrative events; some are real, ingested news classified by keyword (see
+            &ldquo;Recent news&rdquo; below) — see an event&rsquo;s impact on your portfolio below.
           </p>
         </div>
         <DemoDataBadge />
@@ -113,6 +116,35 @@ export default function EventsPage() {
         ))}
         {events.data?.length === 0 && <p className="text-sm text-muted-foreground">No events yet.</p>}
       </div>
+
+      <AparixCard title="Recent news">
+        <p className="mb-3 text-xs text-muted-foreground">
+          Ingested articles — real when the API is configured with a live source (NEWS_PROVIDER=rss), an
+          illustrative fixed set otherwise. Most articles are routine and never become an event above; only
+          ones a keyword classifier judges market-moving do.
+        </p>
+        <AparixTable<NewsArticle>
+          columns={[
+            {
+              header: "Title",
+              render: (a) => (
+                <a href={a.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                  {a.title}
+                </a>
+              ),
+            },
+            { header: "Publisher", render: (a) => <span className="text-muted-foreground">{a.publisher}</span> },
+            { header: "Published", render: (a) => new Date(a.published_at).toLocaleString() },
+            {
+              header: "Event?",
+              render: (a) => (a.event_id ? <AparixBadge tone="accent">Yes</AparixBadge> : "—"),
+            },
+          ]}
+          rows={news.data ?? []}
+          keyFor={(a) => a.id}
+          emptyMessage="No news ingested yet."
+        />
+      </AparixCard>
     </div>
   );
 }

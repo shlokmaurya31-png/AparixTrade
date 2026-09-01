@@ -238,6 +238,28 @@ export interface AparixEvent {
   is_mock: boolean;
 }
 
+export interface NewsArticle {
+  id: string;
+  title: string;
+  summary: string;
+  url: string;
+  publisher: string;
+  published_at: string;
+  discovered_at: string;
+  language: string;
+  region: string | null;
+  source: string;
+  event_id: string | null;
+  is_mock: boolean;
+}
+
+export interface NewsIngestResult {
+  provider: string;
+  fetched: number;
+  new_articles: number;
+  events_created: number;
+}
+
 export interface EventImpact {
   event_id: string;
   headline: string;
@@ -555,6 +577,10 @@ export const api = {
     list: () => request<AparixEvent[]>("/api/v1/events"),
     impact: (eventId: string, portfolioId: string) =>
       request<EventImpact>(`/api/v1/events/${eventId}/impact?portfolio_id=${portfolioId}`),
+  },
+  news: {
+    list: () => request<NewsArticle[]>("/api/v1/news"),
+    ingest: () => request<NewsIngestResult>("/api/v1/news/ingest", { method: "POST" }),
   },
   macro: {
     indicators: () => request<MacroIndicator[]>("/api/v1/macro/indicators"),
