@@ -110,6 +110,16 @@ class MockModelProvider(ModelProvider):
         elif any(
             k in lowered
             for k in [
+                "dividend", "stock split", "bonus issue", "rights issue", "buyback", "corporate action",
+            ]
+        ):
+            symbol = self._guess_symbol(message) or "RELIANCE"
+            data = await use("get_corporate_actions", symbol=symbol)
+            text = self._corporate_actions_text(data, mode)
+
+        elif any(
+            k in lowered
+            for k in [
                 "fundamentals", "roe", "roce", "p/e", "pe ratio", "balance sheet", "income statement",
                 "cash flow", "revenue", "earnings", "eps", "debt to equity", "debt/equity",
             ]
@@ -409,6 +419,35 @@ class MockModelProvider(ModelProvider):
         return (
             f"Your {data['broker']} account{mock_note} holds {len(data['holdings'])} positions worth about "
             f"{data['total_value']:.0f} INR. [DEMO DATA]"
+        )
+
+    @staticmethod
+    def _corporate_actions_text(data: dict, mode: str) -> str:
+        if "error" in data:
+            return f"Couldn't get corporate actions: {data['error']} [DEMO DATA]"
+        actions = data["actions"]
+        if not actions:
+            return f"No corporate actions on record for {data['symbol']}. [DEMO DATA]"
+        if mode == "quant":
+            lines = "; ".join(
+                f"{a['action_type']}"
+                + (f" ratio {a['ratio']}" if a["ratio"] else "")
+                + (f" ₹{a['amount']}/share" if a["amount"] else "")
+                + f" (ex {a['ex_date']})"
+                for a in actions
+            )
+            return f"{data['symbol']} corporate actions: {lines} [DEMO DATA — synthetic record]"
+        latest = actions[-1]
+        detail = (
+            f"a {latest['action_type']} (ratio {latest['ratio']})"
+            if latest["ratio"]
+            else f"a {latest['action_type']} of ₹{latest['amount']}/share"
+            if latest["amount"]
+            else f"a {latest['action_type']}"
+        )
+        return (
+            f"{data['symbol']}'s most recent corporate action on record is {detail}, ex-date {latest['ex_date']}. "
+            f"{len(actions)} action(s) total. [DEMO DATA — synthetic record, not a real company's actual history]"
         )
 
     @staticmethod

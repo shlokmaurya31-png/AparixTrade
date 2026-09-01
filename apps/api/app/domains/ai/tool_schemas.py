@@ -268,6 +268,28 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_corporate_actions",
+            "description": (
+                "Get a company's corporate actions on record — dividends, splits, bonuses, rights issues, "
+                "buybacks. Point-in-time: if as_of is given, only returns actions actually publicly known by "
+                "that date."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Company symbol, e.g. RELIANCE, TCS."},
+                    "as_of": {
+                        "type": "string",
+                        "description": "Date (YYYY-MM-DD) to evaluate as of. Optional — defaults to today.",
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
 ]
 
 _SCHEMA_NAMES = {schema["function"]["name"] for schema in TOOL_SCHEMAS}

@@ -49,14 +49,19 @@ def quote_provenance(*, provider_name: str, as_of: datetime) -> Provenance:
     )
 
 
-def statement_provenance(*, provider_name: str, announcement_date, effective_date) -> Provenance:
+def statement_provenance(
+    *, provider_name: str, announcement_date, effective_date, source: str = "aparix-mock-fundamentals"
+) -> Provenance:
     # announcement_date/effective_date are `date` (not `datetime`) on
-    # FinancialStatement — a filing has no meaningful time-of-day, only a
-    # date. Combined with midnight UTC so they fit Provenance's shared
-    # datetime fields rather than adding a third, date-only variant.
+    # FinancialStatement/CorporateAction — a filing/action has no
+    # meaningful time-of-day, only a date. Combined with midnight UTC so
+    # they fit Provenance's shared datetime fields rather than adding a
+    # third, date-only variant. `source` defaults to the original
+    # (fundamentals) caller for backward compatibility; corporate actions
+    # passes its own.
     to_dt = lambda d: datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc)  # noqa: E731
     return Provenance(
-        source="aparix-mock-fundamentals",
+        source=source,
         provider=provider_name,
         retrieved_at=datetime.now(timezone.utc),
         source_timestamp=to_dt(announcement_date),

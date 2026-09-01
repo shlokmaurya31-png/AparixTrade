@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.broker import service as broker_service
+from app.domains.corporate_actions import service as corporate_actions_service
 from app.domains.events import service as events_service
 from app.domains.fundamentals import service as fundamentals_service
 from app.domains.macro.service import list_indicators
@@ -298,6 +299,38 @@ async def get_fundamentals_tool(
     }
 
 
+async def get_corporate_actions_tool(
+    db: AsyncSession, portfolio: Portfolio, symbol: str = "RELIANCE", as_of: str | None = None, **_: Any
+) -> dict:
+    try:
+        effective_as_of = date.fromisoformat(as_of) if as_of else date.today()
+    except ValueError:
+        effective_as_of = date.today()
+    try:
+        security = await corporate_actions_service.resolve_security(db, symbol)
+    except corporate_actions_service.UnknownSymbolError as exc:
+        return {"error": f"unknown symbol: {exc}"}
+
+    actions = await corporate_actions_service.list_actions_as_of(db, security.id, as_of=effective_as_of)
+    if not actions:
+        return {"symbol": symbol, "actions": [], "note": "No corporate actions on record for this symbol."}
+
+    return {
+        "symbol": security.symbol,
+        "actions": [
+            {
+                "action_type": a.action_type,
+                "ratio": float(a.ratio) if a.ratio is not None else None,
+                "amount": float(a.amount) if a.amount is not None else None,
+                "ex_date": str(a.ex_date),
+                "announcement_date": str(a.announcement_date),
+            }
+            for a in actions
+        ],
+        "is_mock": True,
+    }
+
+
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_portfolio": get_portfolio_tool,
     "get_holdings": get_holdings_tool,
@@ -316,6 +349,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_options_chain": get_options_chain_tool,
     "price_option": price_option_tool,
     "get_fundamentals": get_fundamentals_tool,
+    "get_corporate_actions": get_corporate_actions_tool,
 }
 
 
