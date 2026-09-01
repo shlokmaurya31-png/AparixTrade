@@ -77,7 +77,7 @@ docker-compose.yml   Optional Postgres (+ Redis, commented out) for those with D
 
 Domain modules inside `apps/api/app/domains/`: `auth`, `users`, `portfolios`,
 `market_data`, `risk`, `simulation`, `events`, `macro`, `admin`,
-`paper_trading`, `broker`, `options`, `ai`, `audit`. Each is self-contained
+`paper_trading`, `broker`, `options`, `fundamentals`, `ai`, `audit`. Each is self-contained
 (models it owns, its own service layer, its own router) so it can be
 extracted into a separate service later without a rewrite — but this stays a
 single deployable FastAPI app (spec's own guidance: don't create
@@ -190,7 +190,9 @@ enforcing one `paper` and one `broker` portfolio per user), `securities`,
 `candles`, `holdings`, `transactions` (now with a nullable `order_id`),
 `ai_sessions`, `ai_messages`, `ai_tool_calls`, `audit_logs`, `backtests`,
 `events`, `macro_indicators`, `orders`, `broker_connections` (Phase 5 —
-encrypted credential/token columns, never plaintext). No speculative
+encrypted credential/token columns, never plaintext), `financial_statements`
+(Tier 1 Session 2 — the point-in-time anchor is
+`announcement_date`/`effective_date`, not `created_at`). No speculative
 columns for unbuilt features (e.g.
 no `broker_account_id` sitting unused on `portfolios`) — those get added
 when the feature they support gets built. Phase 6 adds **no new table**:
@@ -358,6 +360,10 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Vol surface visualization (Phase 6) | A 2D IV-vs-strike line chart (Recharts), not a 3D strike × expiry × IV surface | Recharts doesn't support 3D, and pulling in a second charting library conflicts with the standing "Recharts only" decision (§9 above) | "Vol surfaces" in the roadmap description ships as this 2D analog, not the literal 3D chart |
 | Institutional dashboards (Phase 6) | Scoped down to multi-portfolio (still single-user) instead of true multi-client | "Institutional" in the original spec implies an advisor managing multiple *clients'* accounts, which needs a Client/Advisor relationship model that doesn't exist anywhere in this codebase; building one is a separate, bigger project | What shipped instead: a header portfolio switcher plus an "All portfolios" aggregate view (`/portfolio`) — real value for one user with several portfolios, not the full institutional/family-office vision |
 | Public APIs and billing tiers (Phase 6) | Deferred entirely, not stubbed | No external API consumer or tier-gated feature exists yet to justify either; an unused `tier` column or API-key auth surface would be speculative work ahead of need (the same reasoning RAG was deferred under until Phase 3.5 gave it a consumer) | JWT-only auth remains the only auth mechanism; revisit if/when there's an actual external caller or a concrete feature to gate |
+| Fundamentals statement shape (Tier 1 S2) | One wide `financial_statements` row per (security, period_end, period_type) with explicit named columns, not a normalized line-item table | Matches the spec's own enumerated field list directly; avoids pivot-query complexity for a dataset this size | Reconsider only if the line-item set needs to grow dynamically later |
+| Fundamentals generation anchored to price (Tier 1 S2) | Revenue/PAT/equity derived backward from the security's actual mock price via a target P/E and target ROE, not generated independently | An earlier version generated financials independent of price and produced a P/E of ~1667 for a ~₹3000 stock — internally consistent (every ratio traced correctly) but implausible on sight, a real bug caught during live verification, not a hypothetical | Every ratio lands in a believable band by construction; a quarterly statement's balance-sheet items are sized off *annualized* revenue (equity is a snapshot, not a flow that shrinks to a quarter's size), and valuation ratios annualize flow figures (×4 run-rate) before comparing them to price |
+| Fundamentals announcement lag (Tier 1 S2) | `effective_date` = `announcement_date` ≈ `period_end` + 45–60 days (annual), + 30–45 days (quarterly) | Approximates real Indian corporate reporting timelines without claiming to model any specific company's actual filing calendar | Creates a real, testable gap between "period ended" and "publicly known" — the exact window `tests/test_point_in_time_integrity.py` checks isn't leaked |
+| Point-in-time price (Tier 1 S2) | Historical `Candle` close nearest `as_of` for a past date; live spot only when `as_of` is today/omitted | Consistent point-in-time discipline on both sides of every ratio, not just the fundamentals half | A ratio computed for a past `as_of` never mixes a historical statement with today's price |
 
 ## 10. Roadmap
 
@@ -615,10 +621,40 @@ because it touches core architecture every phase above depends on.
   different import path registering it first. A real, if narrow, bug —
   not caught by any existing test, because the app itself never hit it.
 
-**Deferred** (see `docs/APARIX_TIER1_AUDIT.md` for the full MISSING list
-and why): real fundamentals/news/document domains, macro time-series and
-vintage tracking, a corporate-actions engine, an event-propagation graph,
-a financial knowledge graph, RAG/document intelligence, a historical
-analogue engine, portfolio exposure beyond sector, and the point-in-time
-no-look-ahead-bias test suite (nothing with an announcement/effective-date
-split exists yet to test against).
+**Session 2 — Fundamentals + point-in-time integrity** (done): the
+deferred item above, now built. `domains/fundamentals/` — a
+`FundamentalsProvider` interface + `MockFundamentalsProvider` generating
+synthetic income-statement/balance-sheet/cash-flow data (annual +
+quarterly) per seeded security, anchored to that security's actual mock
+price (an earlier version generated financials independent of price and
+produced a P/E of ~1667 for a ~₹3000 stock — internally consistent but
+implausible; fixed by working backward from price → target P/E → EPS →
+PAT → revenue, and by sizing balance-sheet items off *annualized* revenue
+even for a quarterly statement, since equity is a point-in-time snapshot,
+not a flow that shrinks to a quarter's size). `domains/fundamentals/analytics.py`
+— ROE/ROCE/ROA/D-E/interest-coverage/current-ratio/P-E/P-B/EV-EBITDA/
+EV-Sales/FCF-yield, pure functions, fixture-tested against a hand-computed
+example. `get_fundamentals` is AI tool #17.
+
+**The point-in-time guarantee (§15, mandatory)**:
+`get_latest_statement_as_of()` filters on `effective_date`, not
+`period_end` — a query "as of" a date never returns a statement announced
+after that date, even if the fiscal period itself already ended.
+`tests/test_point_in_time_integrity.py` (§49 — the suite Session 1
+deferred for lack of anything to test against) checks the exact leak
+scenario: a period that *ended* but wasn't *announced* yet must not leak
+into a query dated in that gap — the test that would fail under a naive
+`period_end <= as_of` implementation and passes under the real one.
+Point-in-time pricing applies the same discipline to the price side of a
+ratio: a past `as_of` uses the nearest historical `Candle` close, not
+today's live spot.
+
+**Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
+`docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): real
+news/document domains, macro time-series and vintage tracking, a
+corporate-actions engine (so per-share metrics don't yet account for
+historical splits/bonuses), restatement tracking (every statement is
+`is_restated=False`), a real fundamentals data provider (still `MOCK`
+only), an event-propagation graph, a financial knowledge graph, RAG/document
+intelligence, a historical analogue engine, and portfolio exposure beyond
+sector.

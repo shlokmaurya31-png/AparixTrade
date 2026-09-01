@@ -1,9 +1,11 @@
-# Aparix — Tier 1 Infrastructure, Session 1: Completion Report
+# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–2)
 
 Written against `docs/APARIX_TIER1_AUDIT.md` (the pre-implementation
 audit) and the Tier 1 infrastructure request's own 64 sections. Honest
 percentages, not aspirational ones — see §61's own instruction not to
-claim 100% unless something genuinely is.
+claim 100% unless something genuinely is. Updated after Session 2
+(fundamentals + point-in-time integrity); Session 1 content below is
+otherwise unchanged from when it was first written.
 
 ## What "Session 1" means
 
@@ -35,8 +37,48 @@ allowlist.
 | Data licensing framework | `docs/DATA_LICENSING.md` | Classifies every current source — all `MOCK` today except Zerodha (`COMMERCIAL_LICENSE_REQUIRED`, user's own credentials) |
 | Database migration doc | `docs/DATABASE_MIGRATION.md` | Documents the adoption path actually used, not a hypothetical one |
 
-Test count: **139 passing** (was 114 before this session; +25 new tests,
-0 regressions).
+Test count (end of Session 1): **139 passing** (was 114 before Session 1;
++25 new tests, 0 regressions).
+
+## Session 2: Fundamentals + point-in-time integrity
+
+The item Session 1 ranked #1 in its own "Next recommended features" list.
+Implemented in full, including the deferred point-in-time test suite:
+
+| Item | Where | Verification |
+|---|---|---|
+| `FundamentalsProvider` + `MockFundamentalsProvider` | `domains/fundamentals/provider.py` | Deterministic per (symbol, spot price); `tests/test_fundamentals.py` |
+| Point-in-time query enforcement | `domains/fundamentals/service.py::get_latest_statement_as_of()` | `tests/test_point_in_time_integrity.py` (8 tests) — including the exact leak scenario (period ended, not yet announced) the Tier 1 request calls out by name |
+| Point-in-time pricing | `domains/fundamentals/service.py::get_point_in_time_price()` | Historical `Candle` lookup for past dates, verified to differ from live spot in a dedicated test |
+| Ratio/valuation engine | `domains/fundamentals/analytics.py` (11 pure functions) | `tests/test_fundamentals_analytics.py` (14 tests) — hand-computed fixture (ROE 16.667%, D/E 0.4167, P/E 5.0, etc.), not just trusted from the code |
+| `financial_statements` table + migration | `models/fundamentals.py`, `alembic/versions/da4c5fdb88b4_...` | Generated against an empty DB, applied live to the real local dev DB (140 rows seeded, 26 users unaffected) |
+| AI tool `get_fundamentals` (#17) | `domains/ai/tools.py`, both providers | `test_ai_chat_fundamentals_intent`; live-verified via Ollama asking "what's RELIANCE's ROE and P/E ratio" — tool-grounded, cited answer |
+| `/fundamentals` page | `apps/web/app/(dashboard)/fundamentals/page.tsx` | Live-verified: statement + ratios + history for multiple symbols and both period types |
+
+Test count (end of Session 2): **174 passing** (+35 from Session 2's own
+work over Session 1's 139; 0 regressions).
+
+**A real bug caught during live verification, not a hypothetical:** the
+first working version generated revenue/PAT independently of the
+security's actual mock price and produced a **P/E of ~1667** for a
+~₹3000 stock — every number traced correctly (EPS, shares, PAT were all
+internally consistent), but implausible on sight the moment it was looked
+at in a browser rather than just asserted against in a test. Root cause:
+mock revenue was picked from a fixed ₹300–5,000cr range with no relation
+to the price-implied market cap. Fixed by generating backward from price
+(price → target P/E → EPS → PAT → revenue), which was also the point at
+which a **second** issue surfaced: quarterly statements' balance-sheet
+items (equity, assets) were scaling down with quarterly revenue as if
+equity were a flow, producing an ROE/P-E discontinuity between the annual
+and quarterly views for the same company (equity ~4x too small
+quarterly). Fixed by sizing balance-sheet items off *annualized* revenue
+regardless of period type, and by annualizing flow figures (×4 run-rate)
+before computing valuation ratios against price for a quarterly
+statement. Both fixes are covered by regression tests
+(`test_generate_statements_produce_a_plausible_pe_ratio_for_the_latest_year`
+and the ROE-continuity check implied by the analytics fixture), and the
+real local dev database was re-seeded and re-verified live after each fix
+— not just asserted correct in isolation.
 
 ## Partially implemented
 
@@ -56,15 +98,19 @@ Test count: **139 passing** (was 114 before this session; +25 new tests,
   `support`/`super_admin` is a direct DB write. `admin` still also works
   via the email allowlist as before.
 
-## Explicitly missing (not attempted this session — see the audit for why each is a real, separate effort)
+## Explicitly missing (not attempted — see the audit for why each is a real, separate effort)
 
-- Fundamentals engine (income statement/balance sheet/ratios/valuation) —
-  no data model, no provider, nothing.
-- Macro time-series / vintage / revision tracking — the new
+- ~~Fundamentals engine~~ — **done in Session 2**, see above.
+- ~~Point-in-time no-look-ahead-bias test suite (§49)~~ — **done in Session
+  2**, see above.
+- Macro time-series / vintage / revision tracking — the
   `MacroDataProvider` wraps the existing single-current-value model
-  as-is; a real vintage table is its own project.
+  as-is; a real vintage table is its own project. Fundamentals now has
+  point-in-time enforcement, macro still doesn't.
 - Corporate actions engine (splits/bonuses/dividends/mergers) and the
-  adjusted-price utilities that depend on it.
+  adjusted-price utilities that depend on it — also means Session 2's
+  per-share fundamentals metrics don't account for historical splits/
+  bonuses affecting share counts.
 - Survivorship-bias protection / point-in-time security universe.
 - Real news ingestion pipeline (fetch/normalize/dedupe/classify/extract).
 - Event propagation beyond one target (no location → industry → company →
@@ -79,13 +125,11 @@ Test count: **139 passing** (was 114 before this session; +25 new tests,
   card (no ingestion-job monitoring, because no ingestion jobs exist).
 - Frontend event-impact panel, portfolio exposure graph, AI evidence
   drawer (§51–53) — none of these exist.
-- **Point-in-time no-look-ahead-bias test suite (§49)** — deliberately not
-  written. Nothing in this codebase has an announcement-date/
-  effective-date split yet (that needs real fundamentals or macro vintage
-  data first); writing this suite now would be an empty shell asserting
-  nothing meaningful, which is its own kind of the fake functionality this
-  request explicitly prohibits. Write it alongside whichever of
-  fundamentals/macro-vintage ships first.
+- Restatement tracking — every `financial_statements` row is
+  `is_restated=False`; a company revising a prior period is real-world
+  common but modeled as a separate future concern.
+- A real fundamentals data provider — still `MOCK` only, no vendor
+  integration.
 - Open-source research review (§46 — FinRL, PyKiteConnect, indian-market-mcp,
   kite-algo, Fenix, and broader quant/RAG/graph/time-series tooling) —
   **not done this session**. This report will not fabricate an assessment
@@ -105,12 +149,23 @@ Test count: **139 passing** (was 114 before this session; +25 new tests,
   fabricating provenance for derived numbers (dishonest — a computed
   portfolio value doesn't have a "source" the way a quote does) or a much
   larger refactor. Attached only where it's genuinely meaningful.
-- **`FundamentalsProvider`/`NewsProvider`/`DocumentProvider` interfaces
-  were *not* created this session**, even though §5–6 asks for them,
-  because there is no real data behind them yet — an interface with only
-  an empty or trivially-fake Mock implementation is exactly the "fake
+- **Session 1**: `FundamentalsProvider`/`NewsProvider`/`DocumentProvider`
+  interfaces were *not* created, even though §5–6 asks for them, because
+  there was no real data behind them yet — an interface with only an
+  empty or trivially-fake Mock implementation is exactly the "fake
   functionality" §55 prohibits. `MacroDataProvider` was built instead,
-  because the macro domain already has real (if mock) data to wrap.
+  because the macro domain already had real (if mock) data to wrap.
+  Session 2 then built `FundamentalsProvider` for real, once fundamentals
+  had actual data behind it — `NewsProvider`/`DocumentProvider` remain
+  undone for the same original reason.
+- **Fundamentals generation anchors to price, not the other way round**
+  (Session 2): revenue/PAT/equity are derived *backward* from the
+  security's real mock price via a target P/E and target ROE, rather than
+  picked independently and left to imply whatever P/E falls out. This
+  guarantees plausibility by construction instead of by chance — the
+  approach changed specifically because the independent-generation
+  version produced an implausible P/E of ~1667, caught live, not
+  predicted in advance.
 - **RBAC kept `ADMIN_EMAILS` rather than migrating everyone to the new
   `role` column immediately.** A silent migration risked locking out
   whoever is currently relying on the allowlist; the OR-condition design
@@ -158,20 +213,21 @@ external data source and changed no licensing posture.
 
 In rough dependency order, matching what actually unblocks the most:
 
-1. **Fundamentals engine + point-in-time enforcement** — the biggest
-   single MISSING item with the most downstream value (unblocks real
-   ratios/valuation, and is a prerequisite for the point-in-time test
-   suite this session explicitly deferred).
-2. **Corporate actions engine** — needed before any real historical price
-   series can be trusted for backtesting/risk math beyond mock data.
-3. **News ingestion (dev/RSS-tier source) → real event extraction** — the
+1. **Corporate actions engine** — needed before any real historical price
+   series can be trusted for backtesting/risk math beyond mock data, and
+   before Session 2's per-share fundamentals metrics can account for
+   splits/bonuses.
+2. **News ingestion (dev/RSS-tier source) → real event extraction** — the
    event engine's single biggest limitation today is that events are
    hand-seeded, not derived from anything.
+3. **Macro time-series/vintage tracking** — extends the same point-in-time
+   discipline Session 2 gave fundamentals to the macro domain, which still
+   only has a single current value per indicator.
 4. **RAG foundation** — now genuinely unblocked (a real LLM exists since
    Phase 3.5) but still needs an actual document corpus decision before
    the pipeline is worth building.
 5. **RBAC role-management UI + audit trail** — the natural follow-up to
-   this session's backend-only RBAC landing.
+   Session 1's backend-only RBAC landing.
 
 ## Production readiness score
 
@@ -183,15 +239,19 @@ for:
 
 | Area | Readiness | Why |
 |---|---|---|
-| Core architecture (domain structure, provider pattern, testing discipline) | **~75%** | Genuinely solid and now includes real migrations + RBAC; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction |
-| Data integrity infrastructure (provenance, quality, migrations) | **~40%** | Real but narrow — 2 of many data shapes have provenance, quality checks cover 3 of many possible failure modes, no point-in-time enforcement anywhere yet |
-| Actual financial data (market/fundamentals/macro/news/corporate actions) | **~5%** | Everything is synthetic; zero real data sources integrated |
+| Core architecture (domain structure, provider pattern, testing discipline) | **~78%** | Genuinely solid and now includes real migrations + RBAC + a second real point-in-time query engine; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction |
+| Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~50%** | Real point-in-time enforcement now exists for fundamentals (with a real regression test proving it isn't leaking future data) — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, point-in-time discipline doesn't extend to macro yet |
+| Actual financial data (market/fundamentals/macro/news/corporate actions) | **~10%** | Fundamentals now has a real (if synthetic) engine with correct point-in-time semantics — a genuine capability, not just more mock data — but it's still synthetic data with no real vendor behind it, and macro/news/corporate-actions are unchanged |
 | Knowledge graph / event intelligence / RAG | **0%** | Not started beyond the narrow one-target event-impact calculation that already existed pre-Tier-1 |
 | Security (RBAC, encryption, rate limiting, audit) | **~35%** | RBAC and credential encryption are real; rate limiting, request IDs, and error sanitization are entirely absent |
 | Regulatory posture | **~50%** | The education/analytics/advisory/execution boundary is genuinely maintained in product copy and this doc set — but that discipline has never been reviewed by an actual compliance professional, which the request itself says is required before anything resembling real advice or execution ships |
 
-**Overall: this session moved the foundation meaningfully forward
-(schema-drift risk fixed, real RBAC, a real provenance/quality seam
-proven end-to-end) without adding a single line of fake functionality —
-but "Aparix, the financial intelligence operating system for India" is
-still, honestly, mostly ahead of this codebase, not behind it.**
+**Overall: two sessions in, the foundation is meaningfully stronger
+(schema-drift risk fixed, real RBAC, a real provenance/quality seam, and
+now a real point-in-time query engine proven against an actual leak
+scenario) without adding a single line of fake functionality — a real
+plausibility bug (P/E ~1667) was caught and fixed during live
+verification rather than shipped. But "Aparix, the financial intelligence
+operating system for India" is still, honestly, mostly ahead of this
+codebase, not behind it — the knowledge graph, RAG, news ingestion, and
+corporate actions are all still at 0%.**
