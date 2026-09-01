@@ -14,8 +14,14 @@ HISTORY_DAYS = 365
 
 class MarketDataProvider(ABC):
     @abstractmethod
-    def generate_history(self, symbol: str, start_price: float, days: int) -> list[dict]:
-        """Returns `days` daily OHLCV rows ending yesterday, oldest first."""
+    def generate_history(
+        self, symbol: str, start_price: float, days: int, end_date: date | None = None
+    ) -> list[dict]:
+        """Returns `days` daily OHLCV rows ending the day before `end_date`
+        (default: today), oldest first. `end_date` exists for historical-
+        only securities (market_data/historical_seed_data.py) whose price
+        history should stop at their real delisting date, not run forward
+        to today for a security that no longer trades."""
         raise NotImplementedError
 
     @abstractmethod
@@ -30,14 +36,16 @@ class MockMarketDataProvider(MarketDataProvider):
     this returns must be treated as DEMO DATA by callers, never as real
     historical prices."""
 
-    def generate_history(self, symbol: str, start_price: float, days: int = HISTORY_DAYS) -> list[dict]:
+    def generate_history(
+        self, symbol: str, start_price: float, days: int = HISTORY_DAYS, end_date: date | None = None
+    ) -> list[dict]:
         rng = random.Random(f"aparix-mock-{symbol}")
         price = start_price
-        today = datetime.now(timezone.utc).date()
+        anchor = end_date or datetime.now(timezone.utc).date()
         rows: list[dict] = []
 
         for offset in range(days, 0, -1):
-            trade_date = today - timedelta(days=offset)
+            trade_date = anchor - timedelta(days=offset)
             if trade_date.weekday() >= 5:  # skip weekends — NSE is not open
                 continue
 

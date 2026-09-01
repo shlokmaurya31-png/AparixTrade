@@ -20,6 +20,11 @@ class SecurityOut(BaseModel):
     asset_class: str | None = None
     lot_size: int | None = None
     tick_size: float | None = None
+    # Survivorship-bias / point-in-time universe fields (Tier 1) — see
+    # models/security.py and domains/market_data/service.py::list_securities_as_of().
+    is_tradable: bool = True
+    listed_date: datetime.date | None = None
+    delisted_date: datetime.date | None = None
 
     model_config = {"from_attributes": True}
 

@@ -116,6 +116,9 @@ export interface Security {
   sector: string;
   is_index: boolean;
   is_mock: boolean;
+  is_tradable: boolean;
+  listed_date: string | null;
+  delisted_date: string | null;
 }
 
 export interface RiskMatrix {

@@ -33,6 +33,19 @@ class Security(Base, UUIDPrimaryKeyMixin):
     lot_size: Mapped[int | None] = mapped_column(nullable=True)
     tick_size: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
 
+    # Survivorship-bias / point-in-time universe fields (Tier 1). Every
+    # security seeded before this existed keeps `is_tradable=True` and null
+    # listed/delisted dates — meaning "no known constraint," not a false
+    # claim about a real listing date this app never had data for. Only the
+    # 2 dedicated historical-only securities (market_data/historical_seed_data.py)
+    # ever get `is_tradable=False` — see list_securities_as_of() in
+    # domains/market_data/service.py for the actual point-in-time query,
+    # and docs/ARCHITECTURE.md §9 for why the live tradable universe is
+    # never touched by this.
+    is_tradable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    listed_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    delisted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
 
 class Candle(Base, UUIDPrimaryKeyMixin):
     """Daily OHLCV. Phase 1 data is entirely synthetic (seeded random walk),

@@ -30,7 +30,12 @@ async def seed_if_needed(db: AsyncSession) -> None:
 
     provider = get_corporate_actions_provider()
     today = datetime.now(timezone.utc).date()
-    result = await db.execute(select(Security).where(Security.is_index.is_(False)))
+    # is_tradable excludes the 2 dedicated historical-only securities
+    # (Tier 1 survivorship-bias work, market_data/service.py::seed_historical_universe_if_needed())
+    # — they get exactly one deliberate corporate action (their own
+    # delisting/merger record), seeded separately, not a second random
+    # dividend/split from this generic loop too.
+    result = await db.execute(select(Security).where(Security.is_index.is_(False), Security.is_tradable.is_(True)))
     securities = list(result.scalars().all())
 
     for security in securities:

@@ -39,7 +39,12 @@ async def seed_if_needed(db: AsyncSession) -> None:
 
     provider = get_fundamentals_provider()
     today = datetime.now(timezone.utc).date()
-    result = await db.execute(select(Security).where(Security.is_index.is_(False)))
+    # is_tradable excludes the 2 dedicated historical-only securities
+    # (Tier 1 survivorship-bias work) — they get exactly one deliberate
+    # corporate action (their delisting/merger record), not also a random
+    # fundamentals history a mock company that no longer trades wouldn't
+    # plausibly keep filing.
+    result = await db.execute(select(Security).where(Security.is_index.is_(False), Security.is_tradable.is_(True)))
     securities = list(result.scalars().all())
 
     for security in securities:

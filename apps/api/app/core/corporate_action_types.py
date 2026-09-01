@@ -35,10 +35,14 @@ ALL_ACTION_TYPES: Final[tuple[str, ...]] = (
 # dividends/buybacks affect cash, not the share count, so they're excluded.
 RATIO_ACTION_TYPES: Final[tuple[str, ...]] = (ActionType.SPLIT, ActionType.BONUS, ActionType.RIGHTS)
 
-# Types this session deliberately doesn't seed against the live tradable
-# universe (would break existing paper trading/portfolio flows) — see
-# docs/ARCHITECTURE.md §9. Supported as schema/logic, tested via synthetic
-# fixtures only.
+# Types never seeded against the LIVE tradable universe (would break
+# existing paper trading/portfolio flows) — see docs/ARCHITECTURE.md §9.
+# DELISTING and MERGER are seeded for real, but only against the 2
+# dedicated historical-only securities (Tier 1 survivorship-bias work,
+# domains/market_data/historical_seed_data.py) that were never tradable in
+# the first place. DEMERGER/SYMBOL_CHANGE/ISIN_CHANGE remain supported as
+# schema/logic, tested via synthetic fixtures only — no seeded example of
+# either exists yet.
 DISRUPTIVE_ACTION_TYPES: Final[tuple[str, ...]] = (
     ActionType.MERGER,
     ActionType.DEMERGER,

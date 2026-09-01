@@ -1,11 +1,14 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.corporate_action_types import ActionType
+from app.domains.market_data.historical_seed_data import DELISTED_SECURITY, MERGED_SECURITY
 from app.domains.market_data.provider import MockMarketDataProvider
 from app.domains.market_data.seed_data import SEED_SECURITIES
+from app.models.corporate_action import CorporateAction
 from app.models.security import Candle, Security
 
 provider = MockMarketDataProvider()
@@ -30,8 +33,113 @@ async def seed_if_needed(db: AsyncSession) -> None:
     await db.commit()
 
 
-async def list_securities(db: AsyncSession) -> list[Security]:
-    result = await db.execute(select(Security).order_by(Security.is_index.desc(), Security.symbol))
+async def seed_historical_universe_if_needed(db: AsyncSession) -> None:
+    """Idempotent, and deliberately independent of seed_if_needed() (not
+    nested inside it) — the same "seed only runs once" gotcha already hit
+    three times this session (news, macro vintage) would otherwise apply
+    here too, since this repo's real dev database's `securities` table is
+    long since non-empty. Seeds exactly 2 dedicated historical-only
+    securities (market_data/historical_seed_data.py) — never added to or
+    removed from the live tradable universe, just proof that
+    list_securities_as_of() is a real point-in-time query and not a
+    trivial pass-through. `is_tradable=False` keeps them out of
+    list_securities() (frontend dropdowns), live tick seeding, and the
+    fundamentals/corporate-actions domains' own direct seeding queries."""
+    symbol, name, sector, start_price, listed_date, delisted_date = DELISTED_SECURITY
+    existing = await get_security_by_symbol(db, symbol)
+    if existing is not None:
+        return
+
+    delisted = Security(
+        symbol=symbol,
+        name=name,
+        sector=sector,
+        is_mock=True,
+        is_tradable=False,
+        listed_date=listed_date,
+        delisted_date=delisted_date,
+    )
+    db.add(delisted)
+    await db.flush()
+    for row in provider.generate_history(symbol, start_price, end_date=delisted_date):
+        db.add(Candle(security_id=delisted.id, is_mock=True, **row))
+    db.add(
+        CorporateAction(
+            security_id=delisted.id,
+            action_type=ActionType.DELISTING,
+            announcement_date=delisted_date - timedelta(days=60),
+            ex_date=delisted_date,
+            effective_date=delisted_date,
+            source="mock",
+            is_mock=True,
+        )
+    )
+
+    m_symbol, m_name, m_sector, m_start_price, m_listed_date, m_delisted_date, merged_into_symbol = MERGED_SECURITY
+    merged_target = await get_security_by_symbol(db, merged_into_symbol)
+    merged = Security(
+        symbol=m_symbol,
+        name=m_name,
+        sector=m_sector,
+        is_mock=True,
+        is_tradable=False,
+        listed_date=m_listed_date,
+        delisted_date=m_delisted_date,
+    )
+    db.add(merged)
+    await db.flush()
+    for row in provider.generate_history(m_symbol, m_start_price, end_date=m_delisted_date):
+        db.add(Candle(security_id=merged.id, is_mock=True, **row))
+    db.add(
+        CorporateAction(
+            security_id=merged.id,
+            action_type=ActionType.MERGER,
+            new_security_id=merged_target.id if merged_target else None,
+            announcement_date=m_delisted_date - timedelta(days=90),
+            ex_date=m_delisted_date,
+            effective_date=m_delisted_date,
+            source="mock",
+            is_mock=True,
+        )
+    )
+
+    await db.commit()
+
+
+async def list_securities(db: AsyncSession, *, include_delisted: bool = False) -> list[Security]:
+    """Default excludes non-tradable (historical-only) securities — this is
+    the live tradable universe every existing caller (frontend dropdowns,
+    live tick seeding, other domains' own seeding queries) has always
+    meant by "all securities," and stays that way by default so adding
+    historical-only securities can never silently change their behavior.
+    `include_delisted=True` is for callers that genuinely want the full
+    roster (e.g. an admin view) — for the actual point-in-time survivorship
+    query, see list_securities_as_of() below."""
+    stmt = select(Security).order_by(Security.is_index.desc(), Security.symbol)
+    if not include_delisted:
+        stmt = stmt.where(Security.is_tradable.is_(True))
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_securities_as_of(db: AsyncSession, as_of: date) -> list[Security]:
+    """The actual survivorship-bias fix (Tier 1): a security is part of the
+    universe "as of" a date if it had been listed by then (or its listing
+    date is unknown — null, not a false claim of "always existed") AND it
+    had not yet been delisted by then. A query for a PAST date correctly
+    includes a security that has since been delisted/merged — the entire
+    point of point-in-time discipline (§15, same as fundamentals/corporate
+    actions/macro vintage) applied to universe membership itself, not just
+    to a single security's own data."""
+    result = await db.execute(
+        select(Security)
+        .where(
+            Security.is_index.is_(False),
+            or_(Security.listed_date.is_(None), Security.listed_date <= as_of),
+            or_(Security.delisted_date.is_(None), Security.delisted_date > as_of),
+        )
+        .order_by(Security.symbol)
+    )
     return list(result.scalars().all())
 
 

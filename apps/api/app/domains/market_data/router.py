@@ -1,3 +1,5 @@
+import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +18,20 @@ def _with_provenance(quote: dict) -> dict:
 @router.get("/securities", response_model=list[SecurityOut])
 async def get_securities(db: AsyncSession = Depends(get_db)) -> list:
     return await service.list_securities(db)
+
+
+@router.get("/securities/universe", response_model=list[SecurityOut])
+async def get_universe_as_of(
+    as_of: datetime.date | None = None, db: AsyncSession = Depends(get_db)
+) -> list:
+    """Point-in-time security universe (Tier 1 survivorship-bias work) —
+    unlike GET /securities (the live tradable universe, historical-only
+    securities always excluded), this includes a security that has since
+    been delisted/merged as long as it existed on `as_of`. Defaults to
+    today, which is equivalent to the live universe except any historical-
+    only security is still shown (correctly) as no longer part of it."""
+    effective_as_of = as_of or datetime.datetime.now(datetime.timezone.utc).date()
+    return await service.list_securities_as_of(db, effective_as_of)
 
 
 @router.get("/quotes/{symbol}", response_model=QuoteOut)
