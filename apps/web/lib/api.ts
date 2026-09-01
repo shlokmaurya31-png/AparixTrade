@@ -395,6 +395,63 @@ export interface BrokerOrderResult {
   message: string | null;
 }
 
+export interface FinancialStatement {
+  symbol: string;
+  period_end: string;
+  period_type: "annual" | "quarterly";
+  fiscal_year: number;
+  announcement_date: string;
+  effective_date: string;
+  is_restated: boolean;
+  currency: string;
+  unit: string;
+  shares_outstanding: number | null;
+  revenue: number;
+  gross_profit: number;
+  ebitda: number;
+  ebit: number;
+  pbt: number;
+  pat: number;
+  eps: number;
+  total_assets: number;
+  total_liabilities: number;
+  total_equity: number;
+  cash_and_equivalents: number;
+  total_debt: number;
+  current_assets: number;
+  current_liabilities: number;
+  interest_expense: number;
+  cfo: number;
+  cfi: number;
+  cff: number;
+  free_cash_flow: number;
+  is_mock: boolean;
+}
+
+export interface FundamentalRatios {
+  symbol: string;
+  as_of: string;
+  period_end: string;
+  price_used: number | null;
+  price_as_of: string | null;
+  roe_pct: number | null;
+  roce_pct: number | null;
+  roa_pct: number | null;
+  debt_to_equity: number | null;
+  interest_coverage: number | null;
+  current_ratio: number | null;
+  asset_turnover: number | null;
+  market_cap: number | null;
+  pe_ratio: number | null;
+  pb_ratio: number | null;
+  enterprise_value: number | null;
+  ev_to_ebitda: number | null;
+  ev_to_sales: number | null;
+  fcf_yield_pct: number | null;
+  assumptions: string;
+  is_mock: boolean;
+}
+
 export interface ExpiryList {
   symbol: string;
   expiries: string[];
@@ -524,6 +581,20 @@ export const api = {
     chain: (symbol: string, expiry: string) =>
       request<OptionChain>(
         `/api/v1/options/chain?symbol=${encodeURIComponent(symbol)}&expiry=${encodeURIComponent(expiry)}`
+      ),
+  },
+  fundamentals: {
+    latest: (symbol: string, periodType: "annual" | "quarterly" = "annual") =>
+      request<FinancialStatement>(
+        `/api/v1/fundamentals/${encodeURIComponent(symbol)}?period_type=${periodType}`
+      ),
+    history: (symbol: string, periodType: "annual" | "quarterly" = "annual") =>
+      request<FinancialStatement[]>(
+        `/api/v1/fundamentals/${encodeURIComponent(symbol)}/history?period_type=${periodType}`
+      ),
+    ratios: (symbol: string, periodType: "annual" | "quarterly" = "annual") =>
+      request<FundamentalRatios>(
+        `/api/v1/fundamentals/${encodeURIComponent(symbol)}/ratios?period_type=${periodType}`
       ),
   },
 };

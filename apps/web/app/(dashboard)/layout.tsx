@@ -11,6 +11,7 @@ import { useAppStore } from "@/store/app-store";
 const NAV_ITEMS = [
   { href: "/home", label: "Home" },
   { href: "/portfolio", label: "Portfolio" },
+  { href: "/fundamentals", label: "Fundamentals" },
   { href: "/options", label: "Options" },
   { href: "/paper", label: "Paper Trading" },
   { href: "/broker", label: "Broker" },
