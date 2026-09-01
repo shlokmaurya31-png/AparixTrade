@@ -72,6 +72,19 @@ class Settings(BaseSettings):
     embedding_provider: str = "hashing"
     embedding_ollama_model: str = "nomic-embed-text"
 
+    # Rate limiting / request tracing (Tier 1 §42) — see core/middleware.py.
+    # An in-process fixed-window limiter, not a stub: real per-client-IP
+    # counters, real 429s with a real Retry-After. Explicitly scoped to a
+    # single process (this app has always run as one asyncio process —
+    # SQLite, no Redis/shared cache — so that's consistent with the rest
+    # of the architecture, not a shortcut; a real multi-instance deployment
+    # would need a shared store instead). Disabled in tests (conftest.py)
+    # so the test suite's hundreds of requests from one fake client IP
+    # don't trip it.
+    rate_limit_enabled: bool = True
+    rate_limit_general_per_minute: int = 120
+    rate_limit_auth_per_minute: int = 10
+
     # Broker integration (Phase 5) — see domains/broker/. Mirrors the
     # AI_PROVIDER pattern: checked-in default is "mock" (zero external
     # deps), "zerodha" activates the real Kite Connect adapter once

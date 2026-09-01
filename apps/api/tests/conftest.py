@@ -13,6 +13,12 @@ os.environ["AI_PROVIDER"] = "mock"
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-not-for-production"
 os.environ["BROKER_PROVIDER"] = "mock"
 os.environ["BROKER_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+# The test suite makes hundreds of requests from one fake client IP —
+# real rate limiting is tested directly against FixedWindowRateLimiter/
+# RateLimitMiddleware (tests/test_middleware.py), not through this shared
+# client fixture, which would otherwise start getting real 429s partway
+# through an unrelated test file.
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 from app.main import app, lifespan  # noqa: E402
 
@@ -27,7 +33,13 @@ def _cleanup_db():
 @pytest_asyncio.fixture
 async def client():
     async with lifespan(app):
-        transport = ASGITransport(app=app)
+        # raise_app_exceptions=False: a real HTTP client never sees a
+        # Python traceback, only a response — and since main.py's global
+        # exception handler now converts any genuinely unhandled exception
+        # into a real (sanitized) 500 response, that's what the test
+        # client should see too, not a re-raised exception escaping into
+        # the test itself.
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
 

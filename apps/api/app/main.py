@@ -1,13 +1,18 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.v1 import api_v1_router
 from app.core.config import get_settings
 from app.core.db import AsyncSessionLocal
+from app.core.logging_config import configure_logging
+from app.core.middleware import RateLimitMiddleware, RequestIDMiddleware
 from app.core.migrations import run_migrations
+from app.core.rate_limit import FixedWindowRateLimiter
 from app.domains.corporate_actions.service import seed_if_needed as seed_corporate_actions_if_needed
 from app.domains.events.service import seed_if_needed as seed_events_if_needed
 from app.domains.fundamentals.service import seed_if_needed as seed_fundamentals_if_needed
@@ -25,6 +30,8 @@ from app.domains.news.service import run_news_ingestion_loop, seed_if_needed as 
 from app.domains.rag.service import reindex_missing as reindex_rag_if_needed
 
 settings = get_settings()
+configure_logging()
+logger = logging.getLogger("app.errors")
 
 
 @asynccontextmanager
@@ -71,6 +78,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Middleware order matters — Starlette runs the LAST-added middleware
+# FIRST on the way in (outermost), so this order gives: CORS (outermost,
+# every response — including a 429 or 500 — still gets proper CORS
+# headers) -> RequestID (assigned before rate limiting checks/logs it) ->
+# RateLimit (innermost, closest to the actual route).
+if settings.rate_limit_enabled:
+    app.add_middleware(
+        RateLimitMiddleware,
+        general_limiter=FixedWindowRateLimiter(
+            max_requests=settings.rate_limit_general_per_minute, window_seconds=60.0
+        ),
+        auth_limiter=FixedWindowRateLimiter(max_requests=settings.rate_limit_auth_per_minute, window_seconds=60.0),
+    )
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -81,6 +102,34 @@ app.add_middleware(
 
 app.include_router(api_v1_router)
 app.include_router(market_ws_router)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Catches only what FastAPI's own handlers for HTTPException/
+    RequestValidationError don't (Starlette dispatches to the most
+    specific registered handler in the exception's MRO, so this never
+    shadows those) — a genuinely unexpected error. Logs the real
+    exception, with a traceback, server-side and correlated by request ID;
+    the client only ever gets a generic message plus that same ID to quote
+    back, never the exception's own message — verified empirically before
+    this handler existed that Starlette's own default already didn't leak
+    a traceback, but this makes the guarantee explicit, tested, and gives
+    the response a request ID for correlation, which the framework default
+    didn't."""
+    request_id = getattr(request.state, "request_id", "-")
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    # A handler registered for the bare `Exception` type runs inside
+    # Starlette's ServerErrorMiddleware, which sits OUTSIDE RequestIDMiddleware
+    # (see Starlette's Starlette.build_middleware_stack()) — an exception
+    # propagating up bypasses that middleware's normal
+    # "attach header after call_next returns" path entirely, so the header
+    # has to be set here directly, not left to the middleware.
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error.", "request_id": request_id},
+        headers={"X-Request-ID": request_id},
+    )
 
 
 @app.get("/health")
