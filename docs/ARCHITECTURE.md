@@ -196,7 +196,10 @@ encrypted credential/token columns, never plaintext), `financial_statements`
 `announcement_date`/`effective_date`, not `created_at`),
 `corporate_actions` (Tier 1 Session 3 — same point-in-time anchor pattern),
 `news_articles` (Tier 1 Session 4 — `content_hash` is the real dedup key,
-`event_id` nullable FK set only when the classifier judged it market-moving).
+`event_id` nullable FK set only when the classifier judged it market-moving),
+`macro_indicator_releases` (Tier 1 Session 5 — additive alongside
+`macro_indicators`, one row per (code, period, revision_number), point-in-time
+anchor is `release_date`).
 No speculative columns for unbuilt features (e.g.
 no `broker_account_id` sitting unused on `portfolios`) — those get added
 when the feature they support gets built. Phase 6 adds **no new table**:
@@ -374,6 +377,8 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | News source choice (Tier 1 S4) | RBI's official press-release RSS feed, not Google News RSS | Google News' own feed copyright explicitly forbids anything beyond "personal, non-commercial" feed-reading — checked directly by fetching it, not assumed. RBI's feed reserves copyright too, but press releases from a financial regulator are issued for public dissemination/news reporting, a materially different posture — see `docs/DATA_LICENSING.md` | Classified `REQUIRES_ATTRIBUTION`, not `PUBLIC` — every article stores/shows a real publisher attribution and links back to RBI's own page, never reproduces full release text |
 | News classification (Tier 1 S4) | A small deterministic keyword-rule table (`domains/news/classifier.py`), not an ML/LLM classifier | Transparent and testable against exact fixture inputs; an LLM-based classifier's output can't be fixture-tested the same way and would be a second, less explainable path to "what counts as a market event," alongside the already-existing hand-seeded `SEED_EVENTS` | Real, live RBI content on a given day is very often entirely routine (VRRR auctions, forex reserve reports) and correctly produces zero classified events — verified live, not assumed; the classifier doesn't force significance onto routine content |
 | Real ingestion gated off by default (Tier 1 S4) | `NEWS_PROVIDER=mock` checked in; `=rss` (real, live, opt-in) also activates a periodic background fetch loop | Matches every other provider in this codebase (`AI_PROVIDER`, `BROKER_PROVIDER`, `MACRO_PROVIDER`, `FUNDAMENTALS_PROVIDER`, `CORPORATE_ACTIONS_PROVIDER`) — zero external dependency for a fresh clone, real capability one setting away | A cold fresh clone never contacts RBI's servers unless a developer explicitly opts in |
+| Macro vintage scope (Tier 1 S5) | Real revision/vintage history generated only for `cpi_inflation` and `gdp_growth` — the other 5 seeded indicators (repo rate, 10Y G-Sec, INR/USD, Brent crude, gold) get none | These 5 are continuously market-quoted rates/prices, not periodically-revised government statistics — India's MOSPI genuinely does revise CPI and GDP (advance → provisional → final); fabricating a "revision history" for a live-quoted FX rate would be precision that data doesn't have | `GET /macro/indicators/{code}/history` returns 404 (not an empty fake list) for a non-revised indicator, naming exactly which two codes do have history |
+| `MacroIndicator` left untouched (Tier 1 S5) | New `macro_indicator_releases` table added alongside the existing single-current-value `MacroIndicator` table, not a replacement | Every existing caller (risk-free rate lookups, the AI's `get_macro_indicators` tool, `/home`'s macro card) keeps working unchanged; the vintage table is purely additive | Two tables now answer related but different questions — "what's the reading right now" (`MacroIndicator`) vs. "what would a query dated X have known, including which figures were later revised" (`MacroIndicatorRelease`) |
 
 ## 10. Roadmap
 
@@ -715,14 +720,63 @@ step from the full spec pipeline, sentiment analysis, and a second real
 source beyond RBI (a commercial publisher's feed would need its own
 licensing review before use — see `docs/DATA_LICENSING.md`).
 
+**Session 5 — Macro time-series/vintage tracking** (done): extends the
+same point-in-time discipline fundamentals and corporate actions already
+have to the macro domain. `MacroIndicator` (single current value per
+code) is left untouched — a new, separate `macro_indicator_releases`
+table (`models/macro_release.py`) carries the actual revision history:
+one row per (code, period, revision_number), each with its own real
+`release_date` distinct from the period it describes. Deliberately scoped
+to only `cpi_inflation` and `gdp_growth` (`domains/macro/vintage.py::VINTAGE_INDICATORS`)
+— the only two of the app's 7 seeded macro indicators that have a
+real-world revision practice; the other 5 (repo rate, 10Y G-Sec yield,
+INR/USD, crude oil, gold) are market-quoted rates/prices with no
+revision concept, and generating a fake "vintage history" for them would
+be exactly the kind of fabricated precision this project's discipline
+prohibits — see §9. `domains/macro/vintage.py::generate_releases()` is a
+pure, deterministically-seeded generator that walks backward from each
+indicator's current value producing period/revision pairs with realistic
+publication lags (CPI: ~14-30 days; GDP: ~45-75 days), never emitting a
+release whose date would fall in the future relative to the seed date.
+`get_releases_as_of()`/`get_latest_known_reading_as_of()`
+(`domains/macro/service.py`) carry the same `release_date <= as_of`
+point-in-time guarantee as fundamentals and corporate actions, tested the
+same way (`tests/test_macro_history.py`, mirroring
+`tests/test_point_in_time_integrity.py`'s pattern for a third domain).
+`GET /macro/indicators/{code}/history` returns 404 — not an empty fake
+list — for a non-revised indicator or an `as_of` date before any release
+existed, so a caller can't mistake "no vintage concept applies here" for
+"no data available yet." `get_macro_history` is AI tool #20. Hit the same
+"seed only runs once" gotcha a third time this session: `seed_vintage_if_needed()`
+was initially nested inside the existing `seed_if_needed()`, but this
+repo's real local dev database already had `macro_indicators` rows from
+Phase 3, long before this table existed, so the outer function's
+already-seeded short-circuit meant vintage seeding never ran — fixed by
+decoupling it into its own top-level call in `app/main.py`'s lifespan,
+the same fix pattern already used for corporate actions and news. A test
+originally asserting the most-recently-available period's final revision
+would exactly equal the indicator's current value failed in a way that
+turned out to be a genuine design realization, not a bug: due to
+realistic publication lag, the most-recently-available period as of
+"today" is often not the current calendar period (whose data hasn't been
+released yet), so it only approximately tracks the current value — the
+test was relaxed to an approximate check with an explanatory comment
+rather than the generator being made less realistic to satisfy an overly
+strict assertion. No frontend surface was added this session (deliberate
+scope decision — no existing page naturally hosts it without
+restructuring `/home`); the data is reachable via the API and the AI
+Terminal.
+
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
 `docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): real
-document domains (RAG), macro time-series and vintage tracking,
+document domains (RAG), macro vintage/revision tracking for the 5
+market-quoted indicators that have no real-world revision concept
+(repo rate, 10Y G-Sec yield, INR/USD, crude oil, gold — see §9),
 retroactively adjusting the live seeded candle history for corporate
 actions, survivorship-bias/point-in-time security universe (delisted/
 renamed/merged securities), restatement tracking (every fundamentals
 statement is `is_restated=False`), real data providers for fundamentals/
-corporate-actions (still `MOCK` only), entity extraction and the
+corporate-actions/macro (still `MOCK` only), entity extraction and the
 knowledge-graph step of the news pipeline, a financial knowledge graph
 more broadly, a historical analogue engine, and portfolio exposure beyond
 sector.

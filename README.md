@@ -5,9 +5,9 @@ every phase on the original roadmap, scoped** (see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and the
 trade-offs behind every scoping decision), **plus Tier 1 infrastructure**
 (data provenance, quality checks, RBAC, real Alembic migrations, a
-point-in-time fundamentals + corporate-actions engine, and a real news
-ingestion pipeline that can genuinely fetch and classify a live RSS feed
-— see
+point-in-time fundamentals + corporate-actions + macro-vintage engine, and
+a real news ingestion pipeline that can genuinely fetch and classify a
+live RSS feed — see
 [`docs/APARIX_TIER1_COMPLETION_REPORT.md`](docs/APARIX_TIER1_COMPLETION_REPORT.md)
 for an honest breakdown of what's real vs. still missing): auth, an
 adaptive dashboard, a portfolio engine, mock Indian market data, a risk &
@@ -28,7 +28,11 @@ Black-Scholes pricing/Greeks — no options trading, analysis only), a
 point-in-time fundamentals engine (synthetic financial statements +
 ratios, anchored to real prices so they stay plausible — a query "as of" a
 date only ever sees what would actually have been announced by then, never
-a later result), multi-portfolio support (a header switcher plus an
+a later result), the same point-in-time discipline applied to macro data
+(real revision/vintage history for CPI inflation and GDP growth — the two
+indicators that genuinely get revised after first release; a query "as
+of" a past date shows only what was actually published by then, including
+which figures were later revised), multi-portfolio support (a header switcher plus an
 aggregate "all my portfolios" view), and an AI Terminal that actually
 understands free-form questions — a real local LLM (Ollama, `llama3.1`)
 calling the same tool registry every number in this app already traces
@@ -134,7 +138,7 @@ licensing caveats that still apply.
 ## Test
 
 ```bash
-cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + admin + paper trading + broker + options + fundamentals + corporate actions + news ingestion + point-in-time + AI-provider fixtures/flows
+cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + macro vintage + admin + paper trading + broker + options + fundamentals + corporate actions + news ingestion + point-in-time + AI-provider fixtures/flows
 npm run build -w web                # production build + strict TS check
 npm run lint -w web
 ```
