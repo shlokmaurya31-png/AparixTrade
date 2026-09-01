@@ -4,8 +4,10 @@ AI-native Indian financial intelligence platform. **Phase 1 through 6 —
 every phase on the original roadmap, scoped** (see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and the
 trade-offs behind every scoping decision), **plus Tier 1 infrastructure**
-(data provenance, quality checks, RBAC, real Alembic migrations, and a
-point-in-time fundamentals engine — see
+(data provenance, quality checks, RBAC, real Alembic migrations, a
+point-in-time fundamentals + corporate-actions engine, and a real news
+ingestion pipeline that can genuinely fetch and classify a live RSS feed
+— see
 [`docs/APARIX_TIER1_COMPLETION_REPORT.md`](docs/APARIX_TIER1_COMPLETION_REPORT.md)
 for an honest breakdown of what's real vs. still missing): auth, an
 adaptive dashboard, a portfolio engine, mock Indian market data, a risk &
@@ -118,10 +120,21 @@ this build (see `docs/ARCHITECTURE.md` §9) — verify a real connect + sync
 before relying on it. Live order placement stays off
 (`BROKER_LIVE_TRADING_ENABLED=false`) until you explicitly turn it on.
 
+**To turn on real news ingestion** (optional — the mock set above needs
+none of this): set `NEWS_PROVIDER=rss` in `apps/api/.env` and restart the
+API. This genuinely fetches and parses RBI's official press-release RSS
+feed on a periodic background schedule (`NEWS_INGESTION_INTERVAL_SECONDS`,
+default 30 min), classifies each article with a transparent keyword rule
+table (`domains/news/classifier.py` — most routine releases correctly
+classify to "not an event"), and creates a real `Event` row for anything
+judged market-moving. See `docs/DATA_LICENSING.md` for why RBI's feed was
+chosen over Google News' (whose own terms forbid this use) and the
+licensing caveats that still apply.
+
 ## Test
 
 ```bash
-cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + admin + paper trading + broker + options + fundamentals + corporate actions + point-in-time + AI-provider fixtures/flows
+cd apps/api && uv run pytest        # portfolio + risk + simulation + events + macro + admin + paper trading + broker + options + fundamentals + corporate actions + news ingestion + point-in-time + AI-provider fixtures/flows
 npm run build -w web                # production build + strict TS check
 npm run lint -w web
 ```

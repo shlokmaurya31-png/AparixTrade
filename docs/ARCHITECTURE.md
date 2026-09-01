@@ -78,7 +78,7 @@ docker-compose.yml   Optional Postgres (+ Redis, commented out) for those with D
 Domain modules inside `apps/api/app/domains/`: `auth`, `users`, `portfolios`,
 `market_data`, `risk`, `simulation`, `events`, `macro`, `admin`,
 `paper_trading`, `broker`, `options`, `fundamentals`, `corporate_actions`,
-`ai`, `audit`. Each is self-contained
+`news`, `ai`, `audit`. Each is self-contained
 (models it owns, its own service layer, its own router) so it can be
 extracted into a separate service later without a rewrite — but this stays a
 single deployable FastAPI app (spec's own guidance: don't create
@@ -194,7 +194,9 @@ enforcing one `paper` and one `broker` portfolio per user), `securities`,
 encrypted credential/token columns, never plaintext), `financial_statements`
 (Tier 1 Session 2 — the point-in-time anchor is
 `announcement_date`/`effective_date`, not `created_at`),
-`corporate_actions` (Tier 1 Session 3 — same point-in-time anchor pattern).
+`corporate_actions` (Tier 1 Session 3 — same point-in-time anchor pattern),
+`news_articles` (Tier 1 Session 4 — `content_hash` is the real dedup key,
+`event_id` nullable FK set only when the classifier judged it market-moving).
 No speculative columns for unbuilt features (e.g.
 no `broker_account_id` sitting unused on `portfolios`) — those get added
 when the feature they support gets built. Phase 6 adds **no new table**:
@@ -369,6 +371,9 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | `Candle.close` convention (Tier 1 S3) | Treated as already-adjusted; corporate actions are historical records, not retroactive price rewrites | Matches how most real market-data feeds present "Close" by default; avoids corrupting existing portfolios/risk/backtest results for currently-tradable mock securities | The mock series correctly shows no artificial discontinuity around a seeded split/bonus — that absence *is* the adjustment, not a gap |
 | Corporate action adjustment scope (Tier 1 S3) | `adjust_price_series()` built and fixture-tested against a synthetic constructed series (a real embedded split discontinuity), not applied to the live seeded universe | Proves the algorithm correct without touching real (if mock) non-disposable local data other features already depend on | Applying it live to this dataset is future work |
 | Disruptive corporate action types (Tier 1 S3) | `merger`/`demerger`/`symbol_change`/`isin_change`/`delisting` supported as schema + adjustment logic, tested via synthetic fixtures only — never seeded against a currently-tradable security | Seeding these against the live universe would break existing paper trading/portfolio/backtest flows for no real benefit | Full survivorship-bias/point-in-time security universe support remains separate future work |
+| News source choice (Tier 1 S4) | RBI's official press-release RSS feed, not Google News RSS | Google News' own feed copyright explicitly forbids anything beyond "personal, non-commercial" feed-reading — checked directly by fetching it, not assumed. RBI's feed reserves copyright too, but press releases from a financial regulator are issued for public dissemination/news reporting, a materially different posture — see `docs/DATA_LICENSING.md` | Classified `REQUIRES_ATTRIBUTION`, not `PUBLIC` — every article stores/shows a real publisher attribution and links back to RBI's own page, never reproduces full release text |
+| News classification (Tier 1 S4) | A small deterministic keyword-rule table (`domains/news/classifier.py`), not an ML/LLM classifier | Transparent and testable against exact fixture inputs; an LLM-based classifier's output can't be fixture-tested the same way and would be a second, less explainable path to "what counts as a market event," alongside the already-existing hand-seeded `SEED_EVENTS` | Real, live RBI content on a given day is very often entirely routine (VRRR auctions, forex reserve reports) and correctly produces zero classified events — verified live, not assumed; the classifier doesn't force significance onto routine content |
+| Real ingestion gated off by default (Tier 1 S4) | `NEWS_PROVIDER=mock` checked in; `=rss` (real, live, opt-in) also activates a periodic background fetch loop | Matches every other provider in this codebase (`AI_PROVIDER`, `BROKER_PROVIDER`, `MACRO_PROVIDER`, `FUNDAMENTALS_PROVIDER`, `CORPORATE_ACTIONS_PROVIDER`) — zero external dependency for a fresh clone, real capability one setting away | A cold fresh clone never contacts RBI's servers unless a developer explicitly opts in |
 
 ## 10. Roadmap
 
@@ -684,13 +689,40 @@ guarantee as fundamentals (`list_actions_as_of()`), tested the same way
 (`tests/test_corporate_actions.py`, mirroring
 `tests/test_point_in_time_integrity.py`'s pattern for a second domain).
 
+**Session 4 — News ingestion** (done): the full pipeline (§18) — SOURCE →
+FETCH → NORMALIZE → DEDUPLICATE → CLASSIFY → EVENT EXTRACTION → STORE —
+for real, not a simulation of it. `domains/news/provider.py::RSSNewsProvider`
+makes a genuine HTTP request and parses real XML (stdlib `xml.etree`, no
+new dependency); `MockNewsProvider` (checked-in default) needs neither.
+`domains/news/classifier.py` is a small, transparent, fixture-tested
+keyword-rule table, not an ML/LLM classifier — see §9 for why, and for the
+Google-News-RSS-vs-RBI-feed licensing research (`docs/DATA_LICENSING.md`).
+Verified against the **live** feed, not just a captured fixture: a real
+run against `https://www.rbi.org.in/pressreleases_rss.xml` fetched 10 real
+press releases and correctly classified zero of them as market-moving
+events, because that day's actual content was entirely routine — the
+classifier not forcing significance onto ordinary content is correct
+behavior, confirmed live, not merely hoped for. A real bug was caught and
+fixed the same way every prior session's bugs were: `MockNewsProvider`'s
+first version duplicated an existing `SEED_EVENTS` headline verbatim,
+silently creating a second, inconsistent `Event` row for the same story —
+caught by an existing test's hardcoded event count, fixed by giving the
+mock article genuinely distinct content, and the real local dev database
+(which had already picked up the duplicate) was cleaned up and
+re-verified live, not just fixed going forward. `search_news` is AI tool
+#19. Deliberately not built: entity extraction and the knowledge-graph
+step from the full spec pipeline, sentiment analysis, and a second real
+source beyond RBI (a commercial publisher's feed would need its own
+licensing review before use — see `docs/DATA_LICENSING.md`).
+
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
 `docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): real
-news/document domains, macro time-series and vintage tracking, retroactively
-adjusting the live seeded candle history for corporate actions,
-survivorship-bias/point-in-time security universe (delisted/renamed/merged
-securities), restatement tracking (every fundamentals statement is
-`is_restated=False`), real data providers for fundamentals/corporate-actions
-(still `MOCK` only), an event-propagation graph, a financial knowledge
-graph, RAG/document intelligence, a historical analogue engine, and
-portfolio exposure beyond sector.
+document domains (RAG), macro time-series and vintage tracking,
+retroactively adjusting the live seeded candle history for corporate
+actions, survivorship-bias/point-in-time security universe (delisted/
+renamed/merged securities), restatement tracking (every fundamentals
+statement is `is_restated=False`), real data providers for fundamentals/
+corporate-actions (still `MOCK` only), entity extraction and the
+knowledge-graph step of the news pipeline, a financial knowledge graph
+more broadly, a historical analogue engine, and portfolio exposure beyond
+sector.
