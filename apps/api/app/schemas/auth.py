@@ -39,5 +39,6 @@ class UserOut(BaseModel):
     full_name: str
     preferences: UserPreferencesOut
     is_admin: bool = False
+    role: str = "user"
 
     model_config = {"from_attributes": True}

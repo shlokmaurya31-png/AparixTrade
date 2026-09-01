@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import is_admin_email
 from app.core.db import get_db
+from app.core.roles import Role
 from app.core.security import InvalidTokenError, decode_token
 from app.models.user import User
 
@@ -36,9 +37,24 @@ async def get_current_user(
     return user
 
 
-async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    """Email-allowlist check — a placeholder, not a real RBAC system. See
-    docs/ARCHITECTURE.md Phase 3 trade-offs."""
-    if not is_admin_email(current_user.email):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+def require_role(*roles: str):
+    """RBAC route guard (Tier 1) — grants access if the user's stored
+    `role` (core/roles.py) is one of `roles`. `"admin"` also keeps
+    accepting the ADMIN_EMAILS allowlist (core/config.py::is_admin_email)
+    as an alternate grant, so existing admin access isn't disturbed by
+    this landing — see docs/APARIX_TIER1_AUDIT.md."""
+
+    async def _dependency(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role in roles:
+            return current_user
+        if Role.ADMIN in roles and is_admin_email(current_user.email):
+            return current_user
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
+    return _dependency
+
+
+async def get_current_admin_user(
+    current_user: User = Depends(require_role(Role.ADMIN, Role.SUPER_ADMIN)),
+) -> User:
     return current_user
