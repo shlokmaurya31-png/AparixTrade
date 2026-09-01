@@ -35,7 +35,11 @@ a later result), the same point-in-time discipline applied to macro data
 (real revision/vintage history for CPI inflation and GDP growth — the two
 indicators that genuinely get revised after first release; a query "as
 of" a past date shows only what was actually published by then, including
-which figures were later revised), multi-portfolio support (a header switcher plus an
+which figures were later revised), the same discipline extended to the
+security universe itself (`GET /market/securities/universe?as_of=` — 2
+dedicated, clearly fictitious historical-only securities prove that a
+query dated before a delisting/merger still shows them, without ever
+touching the live tradable universe), multi-portfolio support (a header switcher plus an
 aggregate "all my portfolios" view), and an AI Terminal that actually
 understands free-form questions — a real local LLM (Ollama, `llama3.1`)
 calling the same tool registry every number in this app already traces

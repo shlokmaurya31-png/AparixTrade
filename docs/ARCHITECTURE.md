@@ -385,6 +385,8 @@ the user's saved run history; explicit runs from `/risk` are saved.
 | Guardrail widened to cover failed tool calls (Tier 1 S6) | `_apply_guardrail()` (`domains/ai/ollama_provider.py`) now treats an attempted-and-failed tool call the same as no tool call at all, not just "any tool call was attempted" | Caught live during this session's own verification: a malformed `top_k` argument crashed `search_knowledge_base` twice, and llama3.1 answered anyway with three entirely invented publisher names/titles/scores — the old guardrail didn't flag it because *a* tool call existed, even though none succeeded | `tests/test_ollama_provider.py::test_guardrail_flags_a_response_built_on_only_failed_tool_calls` is a regression test for this exact scenario, not a hypothetical one |
 | Self-role-change blocked entirely (Tier 1 S7) | `PATCH /admin/users/{id}/role` rejects a target `user_id` equal to the caller's own, for every role, not just a downgrade | A compromised or careless admin session changing its own role (accidental self-lockout, or a compromised token self-escalating) is a real risk a second admin's involvement removes | `tests/test_role_management.py::test_cannot_change_own_role`; the frontend also disables the control on the admin's own row, though the server check is the actual guard |
 | Only super_admin can touch super_admin (Tier 1 S7) | A plain `admin` can grant/revoke any role except `super_admin`, and cannot change an existing `super_admin`'s role at all | Letting a lower-privileged admin mint or strip the platform's highest privilege would defeat having tiers at all | `tests/test_role_management.py::test_plain_admin_cannot_grant_super_admin`, `test_plain_admin_cannot_change_an_existing_super_admins_role` |
+| Fictitious historical securities (Tier 1 S8) | The 2 seeded historical-only securities (`ORIONINFRA`, `VELOCFIN`) are invented companies, not real ones | A delisting/merger is a specific, checkable real-world fact; asserting a real Indian company was delisted/merged on a synthetic date this app invented would be a factual claim with no basis — every other seeded security uses a real company's identity, but only for synthetic *price* data, never a synthetic *corporate event* |  |
+| `list_securities()` default excludes non-tradable (Tier 1 S8) | Every existing caller (frontend dropdowns, live tick seeding, fundamentals/corporate-actions' own seeding queries) keeps returning only the live tradable universe by default; `include_delisted=True` is opt-in | Adding historical-only securities must never silently change what "all securities" means to code written before they existed — live-verified via Playwright that `/portfolio`/`/options`/`/fundamentals` dropdowns are unaffected | `tests/test_survivorship_bias.py::test_live_universe_excludes_historical_securities`, `test_get_securities_endpoint_excludes_historical_securities` |
 
 ## 10. Roadmap
 
@@ -866,6 +868,41 @@ navigation — a Next.js SSR/CSR difference unrelated to this session's
 code, confirmed by re-running the identical flow through a normal
 in-app click with zero errors).
 
+**Session 8 — Survivorship-bias / point-in-time security universe**
+(done): the last item Session 3 explicitly deferred ("seeding these
+against the live universe would break existing paper trading/portfolio/
+backtest flows; full survivorship-bias support is separate future work").
+`Security` gained `is_tradable`/`listed_date`/`delisted_date` (all
+nullable-safe defaults — every security seeded before this migration
+keeps `is_tradable=True` with null dates, meaning "no known constraint,"
+not a false claim of a real listing date this app never had). Two
+dedicated, clearly fictitious historical-only securities
+(`domains/market_data/historical_seed_data.py` — real Indian company
+identities are used everywhere else in this app, but a delisting/merger
+is a specific, checkable real-world fact this codebase has no basis to
+assert about an actual company) are seeded with real candle history
+ending at their real delisting date (not running forward to today for a
+security that no longer trades — `MarketDataProvider.generate_history()`
+gained an `end_date` parameter for this) and exactly one real
+`CorporateAction` each (`delisting`/`merger` — the two
+`DISRUPTIVE_ACTION_TYPES`, core/corporate_action_types.py, that were
+previously schema-only). `list_securities_as_of()`
+(`domains/market_data/service.py`) is the actual point-in-time universe
+query — the same discipline already applied to a single security's own
+data (fundamentals, corporate actions, macro vintage) now applied to
+universe *membership itself*: a query dated before a security's
+delisting/merger correctly still includes it, live-verified via
+`GET /market/securities/universe?as_of=...` against the running server.
+`list_securities()` (the live tradable universe — frontend dropdowns,
+live tick seeding) defaults to excluding non-tradable securities, so
+every existing caller's behavior is unchanged by construction, not by
+convention — live-verified via Playwright that `/portfolio`, `/options`,
+and `/fundamentals`'s symbol dropdowns never show either historical
+security, and that a paper-trading order against one 404s. No frontend
+surface was added for browsing the point-in-time universe itself
+(deliberate scope decision, same reasoning as macro vintage — no existing
+page naturally hosts it); the data is reachable via the API.
+
 **Deferred** (see `docs/APARIX_TIER1_AUDIT.md`/
 `docs/APARIX_TIER1_COMPLETION_REPORT.md` for the full list and why): a
 document-upload/PDF/filing corpus beyond ingested news articles, an ANN
@@ -873,9 +910,9 @@ vector index (ok at the current corpus size — see §9), macro
 vintage/revision tracking for the 5 market-quoted indicators that have no
 real-world revision concept (repo rate, 10Y G-Sec yield, INR/USD, crude
 oil, gold — see §9), retroactively adjusting the live seeded candle
-history for corporate
-actions, survivorship-bias/point-in-time security universe (delisted/
-renamed/merged securities), restatement tracking (every fundamentals
+history for corporate actions, `demerger`/`symbol_change`/`isin_change`
+still unseeded even against a historical-only security (schema/logic only,
+tested via synthetic fixtures), restatement tracking (every fundamentals
 statement is `is_restated=False`), real data providers for fundamentals/
 corporate-actions/macro (still `MOCK` only), entity extraction and the
 knowledge-graph step of the news pipeline, a financial knowledge graph

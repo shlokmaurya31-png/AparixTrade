@@ -1,11 +1,11 @@
-# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–7)
+# Aparix — Tier 1 Infrastructure: Completion Report (Sessions 1–8)
 
 Written against `docs/APARIX_TIER1_AUDIT.md` (the pre-implementation
 audit) and the Tier 1 infrastructure request's own 64 sections. Honest
 percentages, not aspirational ones — see §61's own instruction not to
-claim 100% unless something genuinely is. Updated after Session 7 (RBAC
-role-management UI + audit trail); Sessions 1–6 content below is
-otherwise unchanged from when it was first written.
+claim 100% unless something genuinely is. Updated after Session 8
+(survivorship-bias / point-in-time security universe); Sessions 1–7
+content below is otherwise unchanged from when it was first written.
 
 ## What "Session 1" means
 
@@ -250,6 +250,44 @@ No new database table or migration — `User.role` (`models/user.py`) has
 existed since Session 1; this session made it real to actually edit,
 rather than only settable via a direct DB write.
 
+## Session 8: Survivorship-bias / point-in-time security universe
+
+The last item Session 3 explicitly deferred ("full survivorship-bias
+support is separate future work"), without touching the live tradable
+universe:
+
+| Item | Where | Verification |
+|---|---|---|
+| `Security.is_tradable`/`listed_date`/`delisted_date` | `models/security.py` | Migration applied live to the real local dev DB with a `server_default` for existing rows — 42 users, all 22 existing securities unaffected |
+| 2 dedicated, fictitious historical-only securities | `domains/market_data/historical_seed_data.py` | `tests/test_survivorship_bias.py` (15 tests) — real candle history ending at delisting, exactly one real `CorporateAction` each (delisting/merger) |
+| `list_securities_as_of()` — the real point-in-time universe query | `domains/market_data/service.py` | A leak-scenario test mirroring `test_point_in_time_integrity.py`'s pattern for a 5th domain: as-of-before-delisting includes the security, as-of-after excludes it, as-of-before-listing excludes it; live-verified via `GET /market/securities/universe?as_of=...` against the running server |
+| Live universe unaffected by construction | `list_securities()` defaults to `is_tradable=True` | `tests/test_survivorship_bias.py::test_live_universe_excludes_historical_securities`; live-verified via Playwright — `/portfolio`, `/options`, `/fundamentals` dropdowns never show either historical security, zero console errors |
+| Paper trading correctly rejects a historical symbol | `paper_trading/service.py::_resolve_quote()` (unchanged — the live-quote lookup already fails naturally once the symbol is excluded from live tick seeding) | `test_cannot_place_a_paper_order_against_a_delisted_security` — 404, not a silent fill |
+
+Test count (end of Session 8): **282 passing** (+15 over Session 7's 267;
+0 regressions).
+
+**Deliberately fictitious company identities, not real ones:** every
+other seeded security in this app uses a real Indian company's name with
+synthetic *price* data — but a delisting or merger is a specific,
+checkable real-world fact, and this codebase has no basis to assert a
+real company was delisted/merged on a date it invented. `ORIONINFRA`
+("Orion Infratech Ltd") and `VELOCFIN` ("Velocity Fincorp Ltd") are
+clearly-fictitious shells instead.
+
+**A real seeding-order dependency, caught before it shipped:** the
+delisting/merger `CorporateAction` rows this session adds go into the
+same table `corporate_actions/service.py::seed_if_needed()` uses its own
+"already populated?" count check against. Seeding the historical
+universe before that function ran would have made its count check see
+rows already existed and skip populating the real universe entirely — a
+new variant of the same "seed only runs once" gotcha hit three times
+already (Sessions 4, 5). Caught during design, not live: fixed by
+ordering `seed_historical_universe_if_needed()` after both
+`seed_fundamentals_if_needed()` and `seed_corporate_actions_if_needed()`
+in `app.main`'s lifespan, and documented in both functions' docstrings so
+the ordering requirement doesn't silently break again later.
+
 ## Partially implemented
 
 - **Provenance** only covers 2 of the many data shapes this app serves
@@ -280,10 +318,12 @@ rather than only settable via a direct DB write.
   historical splits/bonuses affecting share counts, since that would
   require applying the adjustment to data currently treated as
   already-adjusted.
-- Survivorship-bias protection / point-in-time security universe — the
-  disruptive action types (merger/demerger/symbol_change/isin_change/
-  delisting) that would drive this exist as schema + tested logic
-  (Session 3) but aren't seeded against any currently-tradable security.
+- ~~Survivorship-bias protection / point-in-time security universe~~ —
+  **done in Session 8** for `delisting`/`merger`, see above, against 2
+  dedicated fictitious historical-only securities never part of the live
+  tradable universe. `demerger`/`symbol_change`/`isin_change` remain
+  schema/logic-only, tested via synthetic fixtures (Session 3), with no
+  seeded example against even a historical-only security yet.
 - ~~Real news ingestion pipeline~~ — **done in Session 4**, see above.
   Entity extraction and the knowledge-graph step of the full spec pipeline
   are still missing (next item).
@@ -438,15 +478,16 @@ external data source and changed no licensing posture.
 
 In rough dependency order, matching what actually unblocks the most:
 
-1. **Survivorship-bias / point-in-time security universe** — a real,
-   separate effort (delisted/renamed/merged securities entering/leaving a
-   historical query), now that Session 3 has the underlying corporate
-   action types defined; still needs a way to seed it that doesn't
-   disrupt the live tradable universe (e.g. a dedicated set of
-   "historical only" securities never offered for trading).
-2. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
+1. **RAG corpus expansion** — a document-upload/PDF/filing ingestion path
    beyond news articles, now that Session 6 has a real embedding+retrieval
    foundation to extend rather than build from scratch.
+2. **Financial knowledge graph** (entities + typed relationships) and
+   **event propagation beyond one target** — the two largest remaining
+   items from the original Tier 1 request's own priority list, both still
+   essentially unstarted.
+3. **Rate limiting, request-ID middleware, sanitized error responses**
+   (§42) — flagged in the original audit, still not addressed by any
+   session so far.
 
 ## Production readiness score
 
@@ -458,34 +499,37 @@ for:
 
 | Area | Readiness | Why |
 |---|---|---|
-| Core architecture (domain structure, provider pattern, testing discipline) | **~84%** | Genuinely solid — real migrations, RBAC, four independent real point-in-time query engines, a real (if narrow) external-data ingestion pipeline, and a real embedding/retrieval layer; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
-| Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~63%** | Point-in-time enforcement now exists for three data domains (fundamentals, corporate actions, macro vintage) plus news's real-vs-classified distinction, each with a regression test proving no future-data leak — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, and macro's point-in-time discipline covers 2 of 7 indicators (correctly — the other 5 have no revision concept to enforce) |
+| Core architecture (domain structure, provider pattern, testing discipline) | **~85%** | Genuinely solid — real migrations, RBAC, five independent real point-in-time query engines (fundamentals, corporate actions, macro vintage, news classification, and now security-universe membership itself), a real external-data ingestion pipeline, and a real embedding/retrieval layer; still missing rate limiting, request IDs, and a background-worker/event-bus abstraction beyond the two asyncio loops that now exist |
+| Data integrity infrastructure (provenance, quality, migrations, point-in-time) | **~65%** | Point-in-time enforcement now exists for four data domains (fundamentals, corporate actions, macro vintage, security universe) plus news's real-vs-classified distinction, each with a regression test proving no future-data leak — still narrow: provenance covers 3 of many data shapes, quality checks cover 3 of many possible failure modes, and macro's point-in-time discipline covers 2 of 7 indicators (correctly — the other 5 have no revision concept to enforce) |
 | Actual financial data (market/fundamentals/macro/news/corporate actions) | **~25%** | Macro now has real revision/vintage history for the 2 indicators that genuinely have one, alongside fundamentals/corporate-actions' real point-in-time engines and news's one real external source (gated off by default). Still entirely synthetic underneath: no real market-data, fundamentals, or macro vendor integration |
 | Knowledge graph / event intelligence / RAG | **~15%** | News ingestion creates real single-target events (a narrow slice of "event intelligence"); RAG now has a real embedding+retrieval foundation over the real news corpus (Session 6) — still no entity extraction, no propagation graph, no knowledge graph, and the RAG corpus is one document domain, not the broader knowledge base the full spec describes |
 | Security (RBAC, encryption, rate limiting, audit) | **~45%** | RBAC now has a real, guarded management UI and a real per-change audit trail (Session 7), and credential encryption is real; rate limiting, request IDs, and error sanitization are still entirely absent |
 | Regulatory posture | **~50%** | The education/analytics/advisory/execution boundary is genuinely maintained in product copy and this doc set — but that discipline has never been reviewed by an actual compliance professional, which the request itself says is required before anything resembling real advice or execution ships |
 
-**Overall: seven sessions in, the foundation is meaningfully stronger
+**Overall: eight sessions in, the foundation is meaningfully stronger
 (schema-drift risk fixed, real RBAC with a real management UI and audit
-trail, a real provenance/quality seam, four independent point-in-time
-query engines each proven against an actual leak scenario, a real
-external news pipeline verified against a live government feed, real
-macro revision/vintage history for the two indicators that genuinely have
-one, and a real embedding/retrieval layer with a genuinely functional
-`researcher` AI mode) without adding a single line of fake functionality.
-A real plausibility bug (P/E ~1667) was caught and fixed during live
-verification in Session 2; a real duplicate-event bug was caught and
-fixed in Session 4; Session 5 caught the same "seed only runs once"
-gotcha a third time and, separately, a test that was asserting something
-unrealistic rather than something wrong; Session 6 caught a real
-tool-argument crash and, more importantly, a real gap in the
-hallucination guardrail itself (a failed tool call wasn't being treated
-as ungrounded) — caught by actually watching the local model fabricate
-citations live, not by inspection, and fixed the same day; Session 7's
-own live verification surfaced an apparent hydration-error console
-message that turned out to be a direct-URL-navigation artifact, not a
-real regression — confirmed rather than assumed, by re-running the exact
-same flow through normal in-app navigation. But "Aparix,
+trail, a real provenance/quality seam, five independent point-in-time
+query engines each proven against an actual leak scenario — including,
+as of this session, universe *membership itself*, not just a single
+security's own data — a real external news pipeline verified against a
+live government feed, real macro revision/vintage history for the two
+indicators that genuinely have one, and a real embedding/retrieval layer
+with a genuinely functional `researcher` AI mode) without adding a single
+line of fake functionality. A real plausibility bug (P/E ~1667) was
+caught and fixed during live verification in Session 2; a real
+duplicate-event bug was caught and fixed in Session 4; Session 5 caught
+the same "seed only runs once" gotcha a third time and, separately, a
+test that was asserting something unrealistic rather than something
+wrong; Session 6 caught a real tool-argument crash and, more importantly,
+a real gap in the hallucination guardrail itself (a failed tool call
+wasn't being treated as ungrounded) — caught by actually watching the
+local model fabricate citations live, not by inspection, and fixed the
+same day; Session 7's own live verification surfaced an apparent
+hydration-error console message that turned out to be a direct-URL-
+navigation artifact, not a real regression; Session 8 caught the same
+"seed only runs once" gotcha a fourth time, this time as a
+cross-domain seeding-order dependency, and caught it at design time
+rather than live. But "Aparix,
 the financial intelligence operating system for India" is still,
 honestly, mostly ahead of this codebase, not behind it — the knowledge
 graph is still essentially unstarted, and RAG covers exactly one document
