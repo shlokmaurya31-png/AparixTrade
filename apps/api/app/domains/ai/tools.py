@@ -24,6 +24,7 @@ from app.domains.news import service as news_service
 from app.domains.options import service as options_service
 from app.domains.paper_trading import service as paper_trading_service
 from app.domains.portfolios.service import compute_portfolio_analytics, get_holdings_with_quotes
+from app.domains.rag import service as rag_service
 from app.domains.risk.service import compute_risk_profile
 from app.domains.simulation import service as simulation_service
 from app.models.portfolio import Portfolio
@@ -383,6 +384,27 @@ async def search_news_tool(db: AsyncSession, portfolio: Portfolio, query: str | 
     }
 
 
+async def search_knowledge_base_tool(
+    db: AsyncSession, portfolio: Portfolio, query: str = "", top_k: int | str = 3, **_: Any
+) -> dict:
+    if not query:
+        return {"results": [], "note": "No query given — nothing to search for."}
+    try:
+        # Ollama tool-calling can hand back an integer-typed argument as a
+        # string (observed live: top_k came through as "5") — same category
+        # of local-model argument unreliability already documented for
+        # as_of dates elsewhere (docs/ARCHITECTURE.md §11), but this one
+        # crashed a list slice instead of just resolving to a wrong value,
+        # so it's coerced defensively here rather than left to raise.
+        top_k = int(top_k)
+    except (TypeError, ValueError):
+        top_k = 3
+    results = await rag_service.retrieve(db, query, top_k=top_k)
+    if not results:
+        return {"results": [], "note": "No indexed documents yet, or none matched closely enough."}
+    return {"query": query, "results": results}
+
+
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_portfolio": get_portfolio_tool,
     "get_holdings": get_holdings_tool,
@@ -404,6 +426,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_fundamentals": get_fundamentals_tool,
     "get_corporate_actions": get_corporate_actions_tool,
     "search_news": search_news_tool,
+    "search_knowledge_base": search_knowledge_base_tool,
 }
 
 

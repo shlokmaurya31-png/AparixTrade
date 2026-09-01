@@ -85,6 +85,18 @@ class MockModelProvider(ModelProvider):
             data = await use("search_news", query=query)
             text = self._search_news_text(data, mode)
 
+        elif any(
+            k in lowered
+            for k in ["knowledge base", "research", "relevant documents", "find documents", "evidence for", "evidence of"]
+        ):
+            query = None
+            for kw in ["about", "regarding", "on", "for", "of"]:
+                if f" {kw} " in lowered:
+                    query = message.split(f" {kw} ", 1)[1].strip() or None
+                    break
+            data = await use("search_knowledge_base", query=query or message, top_k=3)
+            text = self._knowledge_base_text(data, mode)
+
         elif any(k in lowered for k in ["news", "event", "what's happening", "whats happening", "headlines", "market moving"]):
             data = await use("get_events")
             text = self._events_text(data["events"], mode)
@@ -470,6 +482,20 @@ class MockModelProvider(ModelProvider):
         return (
             f"Most recent: \"{top['title']}\" ({top['publisher']}, {top['published_at']}). "
             f"{len(articles)} article(s) found{mock_note}. [DEMO DATA]"
+        )
+
+    @staticmethod
+    def _knowledge_base_text(data: dict, mode: str) -> str:
+        results = data.get("results", [])
+        if not results:
+            return f"{data.get('note', 'No relevant documents found.')} [DEMO DATA]"
+        if mode == "quant":
+            lines = "; ".join(f"{r['title']} (score {r['score']})" for r in results)
+            return f"Retrieved: {lines} [DEMO DATA]"
+        top = results[0]
+        return (
+            f"Most relevant source: \"{top['title']}\" ({top['publisher']}, similarity {top['score']}). "
+            f"{len(results)} document(s) retrieved. [DEMO DATA]"
         )
 
     @staticmethod

@@ -18,6 +18,7 @@ from app.domains.macro.service import (
 from app.domains.market_data.service import live_market_state, seed_if_needed as seed_market_if_needed
 from app.domains.market_data.websocket import router as market_ws_router, run_tick_loop
 from app.domains.news.service import run_news_ingestion_loop, seed_if_needed as seed_news_if_needed
+from app.domains.rag.service import reindex_missing as reindex_rag_if_needed
 
 settings = get_settings()
 
@@ -34,6 +35,10 @@ async def lifespan(app: FastAPI):
         await seed_fundamentals_if_needed(db)
         await seed_corporate_actions_if_needed(db)
         await seed_news_if_needed(db)
+        # Idempotent/incremental (see domains/rag/service.py docstring) —
+        # correct to call unconditionally on every startup, not a one-time
+        # seed, so it also catches up any article a prior run left unindexed.
+        await reindex_rag_if_needed(db)
 
     tick_task = asyncio.create_task(run_tick_loop())
     # Only a real provider gets a periodic background fetch — the checked-in

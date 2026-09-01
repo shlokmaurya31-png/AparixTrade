@@ -70,13 +70,21 @@ MODE_INSTRUCTIONS: dict[str, str] = {
         "there is no options paper trading or position tracking yet, so never imply the user holds an options "
         "position unless they've said so."
     ),
+    "researcher": (
+        "Respond like a research assistant citing real sources: use search_knowledge_base and/or search_news to "
+        "find ingested news/press-release articles relevant to the question, and ground your answer only in "
+        "what those documents actually say — mention the real article title/publisher/date returned by the "
+        "tool as your citation. NEVER invent a publisher name, article title, date, or quote that didn't come "
+        "from a tool result, even one that sounds plausible. If every relevant tool call comes back empty, say "
+        "plainly that nothing relevant is in the ingested corpus — do not fall back to answering from general "
+        "knowledge while presenting it as if it were sourced. The indexed corpus is currently limited to "
+        "ingested news articles (not filings, transcripts, or broader documents)."
+    ),
 }
 
 FALLBACK_MODE_NOTE = (
-    "The user's selected AI mode ('{mode}') isn't backed by real data yet — this platform has no cited-research "
-    "data source built (no RAG/document store). Answer in the plain, beginner-friendly 'simple' style instead, "
-    "and if the question genuinely needs cited research, say that capability isn't available yet rather than "
-    "improvising a persona you can't back up."
+    "The user's selected AI mode ('{mode}') isn't a recognized mode — answer in the plain, beginner-friendly "
+    "'simple' style instead."
 )
 
 _NUMBER_RE = re.compile(r"\d[\d,]*\.?\d*")
@@ -102,16 +110,28 @@ def _build_system_prompt(mode: str) -> str:
 
 def _apply_guardrail(text: str, tool_calls: list[ToolCallRecord]) -> str:
     """Best-effort, not exhaustive — see docs/ARCHITECTURE.md Phase 3.5
-    trade-offs for why a full per-number cross-check isn't done here. This
-    only catches the clearest failure mode: the model stating figures
-    without having queried any tool at all."""
-    if tool_calls:
+    trade-offs for why a full per-number cross-check isn't done here.
+
+    A tool call that returned an `"error"` result does NOT count as
+    "backed by data" — caught live during Session 6 (RAG) verification:
+    llama3.1's search_knowledge_base call failed twice (a malformed
+    top_k argument), and the model then answered anyway with three
+    entirely invented publisher names, article titles, and similarity
+    scores formatted exactly like real tool output. The original version
+    of this function only checked whether *any* tool call was attempted,
+    not whether one actually succeeded — an attempted-and-failed call is
+    exactly as ungrounded as no call at all, so it's treated the same way
+    here, and unconditionally (not just when digits are present, since a
+    fabricated citation needs no numbers to be exactly as false)."""
+    succeeded = any(isinstance(call.result, dict) and "error" not in call.result for call in tool_calls)
+    if succeeded:
         return text
-    if _NUMBER_RE.search(text):
+    attempted_and_failed = bool(tool_calls)
+    if attempted_and_failed or _NUMBER_RE.search(text):
         return (
             text
-            + "\n\n[Note: this response wasn't backed by an Aparix data tool call — treat any figures above as "
-            "illustrative, not verified. Try rephrasing so I can look up real data.]"
+            + "\n\n[Note: this response wasn't backed by a successful Aparix data tool call — treat any facts, "
+            "figures, or citations above as unverified, not confirmed. Try rephrasing so I can look up real data.]"
         )
     return text
 

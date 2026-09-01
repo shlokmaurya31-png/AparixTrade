@@ -335,6 +335,26 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_knowledge_base",
+            "description": (
+                "Real semantic search over ingested news/press-release articles (embedding-based, not just "
+                "keyword substring matching — see search_news for that). Use this to find and cite real "
+                "evidence for a research-style question, e.g. 'what's the evidence for a rate hike' or 'find "
+                "documents about inflation'. Returns the most relevant articles with a similarity score."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for."},
+                    "top_k": {"type": "integer", "description": "Max number of results. Optional, defaults to 3."},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 _SCHEMA_NAMES = {schema["function"]["name"] for schema in TOOL_SCHEMAS}

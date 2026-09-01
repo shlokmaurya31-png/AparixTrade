@@ -257,6 +257,29 @@ def test_guardrail_leaves_non_numeric_ungrounded_response_unchanged():
     assert text == "I don't have enough information to answer that."
 
 
+def test_guardrail_flags_a_response_built_on_only_failed_tool_calls():
+    """Regression test for a real bug caught live during Session 6 (RAG)
+    verification: llama3.1's search_knowledge_base call failed twice (a
+    malformed top_k argument — see tools.py), then answered anyway with
+    three entirely fabricated publisher names, titles, and similarity
+    scores. The old guardrail only checked whether any tool call was
+    attempted, not whether one succeeded, so it let this through
+    unflagged — even though the text has no digits, the pre-fix version's
+    numeric-only check would have missed it too."""
+    failed_call = ToolCallRecord(
+        tool_name="search_knowledge_base", arguments={"query": "digital rupee"}, result={"error": "tool call failed"}
+    )
+    text = _apply_guardrail("According to Business Insider, RBI plans a digital rupee launch.", [failed_call])
+    assert "[Note:" in text
+
+
+def test_guardrail_leaves_response_unchanged_when_at_least_one_call_succeeded():
+    ok_call = ToolCallRecord(tool_name="search_knowledge_base", arguments={}, result={"results": []})
+    failed_call = ToolCallRecord(tool_name="get_events", arguments={}, result={"error": "boom"})
+    text = _apply_guardrail("Here's what I found.", [ok_call, failed_call])
+    assert text == "Here's what I found."
+
+
 # ── Schema/registry consistency ─────────────────────────────────────────────
 
 

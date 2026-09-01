@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     news_rss_source: str = "rbi_press_releases"
     news_ingestion_interval_seconds: int = 1800  # 30 min — respectful of a real external server
 
+    # Embedding provider for RAG (Tier 1) — see domains/rag/embeddings.py.
+    # "hashing" (default, zero external dependency) is a real feature-
+    # hashing bag-of-words embedding, not random noise — a genuine classical
+    # IR technique, just weaker at capturing synonyms/semantics than a
+    # dense neural embedding. "ollama" is the real upgrade: calls a locally
+    # running Ollama's /api/embeddings with embedding_ollama_model (pull it
+    # first, e.g. `ollama pull nomic-embed-text` — it is NOT one of the
+    # chat models OLLAMA_MODEL points at).
+    embedding_provider: str = "hashing"
+    embedding_ollama_model: str = "nomic-embed-text"
+
     # Broker integration (Phase 5) — see domains/broker/. Mirrors the
     # AI_PROVIDER pattern: checked-in default is "mock" (zero external
     # deps), "zerodha" activates the real Kite Connect adapter once

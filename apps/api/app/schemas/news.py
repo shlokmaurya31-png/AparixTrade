@@ -26,3 +26,4 @@ class NewsIngestResultOut(BaseModel):
     fetched: int
     new_articles: int
     events_created: int
+    newly_indexed_for_rag: int

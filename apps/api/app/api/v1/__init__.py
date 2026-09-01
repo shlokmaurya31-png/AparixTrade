@@ -13,6 +13,7 @@ from app.domains.news.router import router as news_router
 from app.domains.options.router import router as options_router
 from app.domains.paper_trading.router import router as paper_trading_router
 from app.domains.portfolios.router import router as portfolios_router
+from app.domains.rag.router import router as rag_router
 from app.domains.risk.router import router as risk_router
 from app.domains.simulation.router import router as simulation_router
 from app.domains.users.router import router as users_router
@@ -33,4 +34,5 @@ api_v1_router.include_router(options_router)
 api_v1_router.include_router(fundamentals_router)
 api_v1_router.include_router(corporate_actions_router)
 api_v1_router.include_router(news_router)
+api_v1_router.include_router(rag_router)
 api_v1_router.include_router(ai_router)

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import AsyncSessionLocal
 from app.domains.news.classifier import classify_article
 from app.domains.news.provider import NewsProvider, get_news_provider
+from app.domains.rag.service import reindex_missing
 from app.models.event import Event
 from app.models.news import NewsArticle
 
@@ -95,11 +96,19 @@ async def ingest_once(db: AsyncSession, provider: NewsProvider | None = None) ->
         new_articles += 1
 
     await db.commit()
+
+    # Keep the RAG vector index in sync with every real ingestion run, not
+    # just at startup — reindex_missing() is idempotent/incremental (see its
+    # docstring), so calling it here even when new_articles == 0 is cheap
+    # and correct, not wasted work.
+    newly_indexed = await reindex_missing(db)
+
     return {
         "provider": provider.name,
         "fetched": len(raw_articles),
         "new_articles": new_articles,
         "events_created": events_created,
+        "newly_indexed_for_rag": newly_indexed,
     }
 
 
