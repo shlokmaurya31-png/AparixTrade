@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     # see domains/corporate_actions/provider.py.
     corporate_actions_provider: str = "mock"
 
+    # News ingestion (Tier 1 Session 4) — "mock" (checked-in default, zero
+    # external dependency) or "rss" (a real, live HTTP fetch against
+    # news_rss_url — see domains/news/provider.py and
+    # docs/DATA_LICENSING.md for why the default real source is RBI's
+    # official press-release feed). Setting this to "rss" also activates
+    # the periodic background ingestion loop (app.main's lifespan);
+    # "mock" seeds once and never polls.
+    news_provider: str = "mock"
+    news_rss_url: str = "https://www.rbi.org.in/pressreleases_rss.xml"
+    news_rss_publisher: str = "Reserve Bank of India"
+    news_rss_source: str = "rbi_press_releases"
+    news_ingestion_interval_seconds: int = 1800  # 30 min — respectful of a real external server
+
     # Broker integration (Phase 5) — see domains/broker/. Mirrors the
     # AI_PROVIDER pattern: checked-in default is "mock" (zero external
     # deps), "zerodha" activates the real Kite Connect adapter once

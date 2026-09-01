@@ -19,6 +19,7 @@ from app.domains.events import service as events_service
 from app.domains.fundamentals import service as fundamentals_service
 from app.domains.macro.service import list_indicators
 from app.domains.market_data.service import get_security_by_symbol, live_market_state
+from app.domains.news import service as news_service
 from app.domains.options import service as options_service
 from app.domains.paper_trading import service as paper_trading_service
 from app.domains.portfolios.service import compute_portfolio_analytics, get_holdings_with_quotes
@@ -331,6 +332,25 @@ async def get_corporate_actions_tool(
     }
 
 
+async def search_news_tool(db: AsyncSession, portfolio: Portfolio, query: str | None = None, **_: Any) -> dict:
+    articles = await news_service.search_articles(db, query, limit=8)
+    if not articles:
+        return {"articles": [], "note": "No matching news articles on record."}
+    return {
+        "articles": [
+            {
+                "title": a.title,
+                "publisher": a.publisher,
+                "published_at": a.published_at.isoformat(),
+                "url": a.url,
+                "linked_event_id": str(a.event_id) if a.event_id else None,
+            }
+            for a in articles
+        ],
+        "is_mock": all(a.is_mock for a in articles),
+    }
+
+
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "get_portfolio": get_portfolio_tool,
     "get_holdings": get_holdings_tool,
@@ -350,6 +370,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "price_option": price_option_tool,
     "get_fundamentals": get_fundamentals_tool,
     "get_corporate_actions": get_corporate_actions_tool,
+    "search_news": search_news_tool,
 }
 
 

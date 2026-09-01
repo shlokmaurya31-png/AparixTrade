@@ -290,6 +290,24 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_news",
+            "description": (
+                "Search ingested news/press-release articles by keyword (e.g. 'repo rate', 'inflation'). "
+                "Returns the most recent matches with title, publisher, date, and URL. If query is omitted, "
+                "returns the most recent articles regardless of topic."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keyword to search for. Optional."},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 _SCHEMA_NAMES = {schema["function"]["name"] for schema in TOOL_SCHEMAS}

@@ -76,6 +76,15 @@ class MockModelProvider(ModelProvider):
             data = await use("get_event_impact")
             text = self._event_impact_text(data, mode)
 
+        elif any(k in lowered for k in ["press release", "search news", "rbi statement", "ingested news"]):
+            query = None
+            for kw in ["about", "regarding", "on"]:
+                if f" {kw} " in lowered:
+                    query = message.split(f" {kw} ", 1)[1].strip() or None
+                    break
+            data = await use("search_news", query=query)
+            text = self._search_news_text(data, mode)
+
         elif any(k in lowered for k in ["news", "event", "what's happening", "whats happening", "headlines", "market moving"]):
             data = await use("get_events")
             text = self._events_text(data["events"], mode)
@@ -419,6 +428,21 @@ class MockModelProvider(ModelProvider):
         return (
             f"Your {data['broker']} account{mock_note} holds {len(data['holdings'])} positions worth about "
             f"{data['total_value']:.0f} INR. [DEMO DATA]"
+        )
+
+    @staticmethod
+    def _search_news_text(data: dict, mode: str) -> str:
+        articles = data["articles"]
+        if not articles:
+            return f"{data.get('note', 'No matching news found.')} [DEMO DATA]"
+        mock_note = " (illustrative mock set)" if data.get("is_mock") else " (real ingested articles)"
+        if mode == "quant":
+            lines = "; ".join(f"{a['title']} — {a['publisher']}, {a['published_at']}" for a in articles[:5])
+            return f"News{mock_note}: {lines} [DEMO DATA]"
+        top = articles[0]
+        return (
+            f"Most recent: \"{top['title']}\" ({top['publisher']}, {top['published_at']}). "
+            f"{len(articles)} article(s) found{mock_note}. [DEMO DATA]"
         )
 
     @staticmethod

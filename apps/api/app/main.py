@@ -14,6 +14,7 @@ from app.domains.fundamentals.service import seed_if_needed as seed_fundamentals
 from app.domains.macro.service import seed_if_needed as seed_macro_if_needed
 from app.domains.market_data.service import live_market_state, seed_if_needed as seed_market_if_needed
 from app.domains.market_data.websocket import router as market_ws_router, run_tick_loop
+from app.domains.news.service import run_news_ingestion_loop, seed_if_needed as seed_news_if_needed
 
 settings = get_settings()
 
@@ -28,12 +29,18 @@ async def lifespan(app: FastAPI):
         await seed_events_if_needed(db)
         await seed_fundamentals_if_needed(db)
         await seed_corporate_actions_if_needed(db)
+        await seed_news_if_needed(db)
 
     tick_task = asyncio.create_task(run_tick_loop())
+    # Only a real provider gets a periodic background fetch — the checked-in
+    # "mock" default is seeded once above and never polls anything.
+    news_task = asyncio.create_task(run_news_ingestion_loop()) if settings.news_provider == "rss" else None
     try:
         yield
     finally:
         tick_task.cancel()
+        if news_task is not None:
+            news_task.cancel()
 
 
 app = FastAPI(

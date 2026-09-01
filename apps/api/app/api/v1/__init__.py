@@ -9,6 +9,7 @@ from app.domains.events.router import router as events_router
 from app.domains.fundamentals.router import router as fundamentals_router
 from app.domains.macro.router import router as macro_router
 from app.domains.market_data.router import router as market_router
+from app.domains.news.router import router as news_router
 from app.domains.options.router import router as options_router
 from app.domains.paper_trading.router import router as paper_trading_router
 from app.domains.portfolios.router import router as portfolios_router
@@ -31,4 +32,5 @@ api_v1_router.include_router(broker_router)
 api_v1_router.include_router(options_router)
 api_v1_router.include_router(fundamentals_router)
 api_v1_router.include_router(corporate_actions_router)
+api_v1_router.include_router(news_router)
 api_v1_router.include_router(ai_router)
